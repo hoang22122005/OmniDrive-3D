@@ -1,0 +1,10 @@
+{
+  "image_hw": [64, 96],
+  "camera_count": 4,
+  "feature_stride": 4,
+  "grid": {"x": [-5.0, 5.0, 24], "y": [-5.0, 5.0, 24], "z_edges": [-0.2, 0.4, 1.0, 1.7, 2.5]},
+  "depth": {"near": [0.2, 4.2, 10], "far": [4.2, 16.0, 8]},
+  "classes": ["free", "static", "curb", "rider", "pedestrian"],
+  "feature_channels": 8,
+  "backbone": "small_cnn"
+}

@@ -1,0 +1,11 @@
+{
+  "model": "configs/model/edge.json",
+  "stage": "supervised",
+  "epochs": 12,
+  "batch_size": 1,
+  "accumulation": 4,
+  "lr": 0.0001,
+  "weight_decay": 0.01,
+  "seed": 42,
+  "loss": {"occupancy": 1.0, "depth": 0.8, "semantics": 1.0, "health": 0.2, "velocity": 0.3, "risk": 0.5, "center": 1.0, "offset": 0.5}
+}

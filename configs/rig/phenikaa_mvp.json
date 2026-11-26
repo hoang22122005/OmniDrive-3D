@@ -1,0 +1,11 @@
+{
+  "rig_id": "phenikaa-mini-center-estimate",
+  "dataset_revision": "phenikaa-mini-2026-09-two-clip-mvp-v1",
+  "optics_max_theta_deg": 95,
+  "ground_height_m": 0.0,
+  "ego_xy_bounds_m": [-2.60, 2.60, -1.15, 1.15],
+  "T_ego_from_lidar_ref": [[1, 0, 0, -1.449], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+  "confirmed_single_lidar_origin": false,
+  "free_label_mode": "camera_depth_proxy",
+  "clips": {"train": ["COMPLEX CITY"], "val": ["COMPLEX URBAN"], "test": []}
+}

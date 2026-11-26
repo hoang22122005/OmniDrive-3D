@@ -1,0 +1,11 @@
+{
+  "model": "configs/model/smoke.json",
+  "stage": "supervised",
+  "epochs": 1,
+  "batch_size": 2,
+  "accumulation": 1,
+  "lr": 0.001,
+  "weight_decay": 0.01,
+  "seed": 42,
+  "loss": {"occupancy": 1.0, "depth": 0.8, "semantics": 1.0}
+}

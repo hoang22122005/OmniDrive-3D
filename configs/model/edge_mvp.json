@@ -1,0 +1,10 @@
+{
+  "image_hw": [320, 576],
+  "camera_count": 4,
+  "feature_stride": 4,
+  "grid": {"x": [-8.0, 8.0, 80], "y": [-6.0, 6.0, 60], "z_edges": [-0.2, 0.4, 1.0, 1.7, 2.5]},
+  "depth": {"near": [0.2, 4.2, 20], "far": [4.2, 32.0, 12]},
+  "classes": ["free", "vehicle", "rider", "pedestrian"],
+  "feature_channels": 24,
+  "backbone": "dinov3_vits16"
+}

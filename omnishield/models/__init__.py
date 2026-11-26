@@ -1,0 +1,1 @@
+"""RGB-only perception models."""

@@ -1,0 +1,3487 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OmniShield-X · Temporal-Spatial 3D Adaptive Bowl AR</title>
+  <style>
+    :root {
+      --bg: #080d0c; --panel: #101715; --panel2: #141e1b; --line: #23332e;
+      --ink: #ecf3ee; --muted: #8ea398; --mint: #90f3be; --cyan: #38bdf8; --fault: #ef4d4d;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0; color: var(--ink); background: var(--bg);
+      font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      padding: 10px 18px; border-bottom: 1px solid var(--line); background: #0c1211;
+    }
+    .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; }
+    .logo {
+      width: 11px; height: 11px; transform: rotate(45deg);
+      border: 2px solid var(--mint); background: rgba(144, 243, 190, .2);
+    }
+    .badges { display: flex; gap: 7px; flex-wrap: wrap; }
+    .badge {
+      padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--panel); color: var(--muted); font-size: 12px;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mint); }
+    main { max-width: 1480px; margin: 0 auto; padding: 12px 16px 20px; display: grid; gap: 10px; }
+    .toolbar { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .tabs { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+    .tabs-label { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 3px; }
+    #rightTabs button[data-mode="gt3d"] { margin-left: 5px; }
+    button {
+      font: inherit; color: var(--ink); background: var(--panel2); border: 1px solid var(--line);
+      border-radius: 6px; padding: 5px 10px; min-height: 32px; cursor: pointer; font-weight: 600; font-size: 12px;
+      transition: border-color .15s, background .15s;
+    }
+    button:hover { border-color: #496b5f; }
+    button[aria-pressed="true"] { background: #173327; border-color: var(--mint); color: var(--mint); }
+    .headunit {
+      background: linear-gradient(180deg, #121a18, #0b100f); border: 1px solid #2b3d37;
+      border-radius: 12px; padding: 8px; box-shadow: 0 18px 46px rgba(0, 0, 0, .52);
+    }
+    .screen {
+      display: grid; grid-template-columns: minmax(0, 1.32fr) minmax(0, 1fr); gap: 4px;
+      background: #040706; border-radius: 9px; overflow: hidden; border: 1px solid #1e2d28;
+      height: clamp(480px, 63vh, 720px);
+    }
+    .pane { position: relative; background: #060a0c; overflow: hidden; }
+    .pane > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+    .pane-status {
+      position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+      padding: 16px; color: var(--muted); font-size: 13px; pointer-events: none;
+    }
+    .avm-split-divider {
+      position: absolute; top: 0; bottom: 0; left: 35%; width: 2px; z-index: 4; pointer-events: none;
+      background: linear-gradient(180deg, rgba(144,243,190,.45), rgba(35,51,46,.9) 50%, rgba(144,243,190,.45));
+    }
+    .avm-top-tag {
+      position: absolute; top: 10px; left: 10px; padding: 3px 8px; border-radius: 6px;
+      background: rgba(10, 17, 15, .86); border: 1px solid rgba(144, 243, 190, .28);
+      font-size: 11px; font-weight: 600; color: #d8eadb; pointer-events: none; z-index: 4;
+      display: flex; align-items: center; gap: 5px;
+    }
+    .avm-top-hint {
+      position: absolute; left: 10px; bottom: 10px; padding: 3px 8px; border-radius: 6px;
+      background: rgba(10, 17, 15, .78); border: 1px solid var(--line);
+      font-size: 10px; color: var(--muted); pointer-events: none; z-index: 4;
+    }
+    .ar-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+    .ar-pill {
+      position: absolute; transform: translate(-50%, -100%);
+      padding: 2px 7px; border-radius: 99px; font-size: 11px; font-weight: 700; white-space: nowrap;
+      background: rgba(7, 13, 16, .86); border: 1px solid #38bdf8; color: #e2f6ff;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, .5); letter-spacing: .01em;
+    }
+    .ar-pill.rider { border-color: #fb923c; color: #ffedd5; }
+    .ar-pill.pedestrian { border-color: #f472b6; color: #fce7f3; }
+    .avm-detail-bar {
+      position: absolute; top: 10px; left: calc(35% + 10px); right: 10px; z-index: 5;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      pointer-events: none; flex-wrap: nowrap;
+    }
+    .avm-detail-bar.full { left: 10px; }
+    .pane-tag {
+      padding: 4px 9px; border-radius: 6px;
+      background: rgba(10, 17, 15, .86); border: 1px solid rgba(144, 243, 190, .28);
+      font-size: 11px; color: #d8eadb; pointer-events: none;
+      display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex-shrink: 0;
+    }
+    .pane-tag.standalone { position: absolute; top: 10px; left: 10px; z-index: 5; }
+    .cam-presets {
+      position: absolute; left: calc(35% + 8px); right: 8px; bottom: 10px;
+      display: flex; gap: 4px; flex-wrap: nowrap; justify-content: center; z-index: 6;
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .cam-presets::-webkit-scrollbar { display: none; }
+    .cam-presets.full { left: 8px; }
+    .cam-presets button {
+      background: rgba(14, 23, 20, .92); min-height: 29px; padding: 4px 8px; font-size: 11px;
+      white-space: nowrap; flex-shrink: 0; backdrop-filter: blur(6px);
+    }
+    .multi-cam-bar {
+      position: absolute; top: 42px; left: calc(35% + 10px); right: 10px; z-index: 6;
+      display: flex; align-items: center; gap: 4px; flex-wrap: wrap; pointer-events: auto;
+    }
+    .multi-cam-bar button {
+      background: rgba(11, 18, 16, .88); border-color: rgba(144, 243, 190, .24);
+      min-height: 25px; padding: 2px 8px; font-size: 10.5px; white-space: nowrap; backdrop-filter: blur(6px);
+    }
+    .multi-cam-bar button[aria-pressed="true"] {
+      background: rgba(23, 56, 42, .94); border-color: var(--mint); color: var(--mint);
+    }
+    .multi-cam-badge {
+      padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 600;
+      background: rgba(10, 17, 15, .82); border: 1px solid var(--line); color: var(--muted);
+      white-space: nowrap; pointer-events: none;
+    }
+    .multi-overlays {
+      position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden;
+    }
+    .multi-divider {
+      position: absolute; background: rgba(35, 51, 46, .95); pointer-events: none;
+    }
+    .multi-tile-tag {
+      position: absolute; padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 700;
+      background: rgba(8, 13, 12, .84); border: 1px solid rgba(144, 243, 190, .32); color: #e2f5ea;
+      white-space: nowrap; pointer-events: none;
+    }
+    button.sig-on { background: #3b2608; border-color: #fbbf24; color: #fde68a; }
+    button.gear-r { background: #3b1114; border-color: #f87171; color: #fecaca; }
+    .pane-right-tools {
+      position: absolute; top: 10px; right: 10px; display: flex; gap: 5px; flex-wrap: wrap; z-index: 3;
+    }
+    .pane-right-tools button { background: rgba(16, 25, 22, .88); min-height: 28px; padding: 3px 9px; font-size: 11px; }
+    .legend {
+      display: inline-flex; flex-wrap: nowrap; gap: 6px; flex-shrink: 0;
+      padding: 4px 8px; border-radius: 6px; background: rgba(10, 17, 15, .86); border: 1px solid var(--line);
+      font-size: 10px; color: #cbded0; pointer-events: none; white-space: nowrap;
+    }
+    .sw { display: inline-flex; align-items: center; gap: 4px; }
+    .sw::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: #38bdf8; }
+    .sw.rid::before { background: #fb923c; }
+    .sw.ped::before { background: #f472b6; }
+    .sw.vec::before { background: #2dd4bf; }
+    .sw.pdc::before { background: #ef4444; }
+    .transport {
+      display: grid; grid-template-columns: auto minmax(80px, 1fr) auto; align-items: center;
+      gap: 12px; padding: 9px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    }
+    .play { background: var(--mint); color: #0f2017; border-color: transparent; min-width: 82px; }
+    .play:hover { background: #b8fbd6; }
+    input[type="range"] { width: 100%; margin: 0; accent-color: var(--mint); }
+    .bottom-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; align-items: start; }
+    .cams-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+    .cam-mini { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+    .cam-mini.selected { border-color: var(--mint); }
+    .cam-mini.off img { opacity: .18; filter: grayscale(1); }
+    .cam-mini-head { padding: 5px 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+    .cam-mini img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; cursor: pointer; background: #09100e; }
+    .cam-mini-foot { padding: 4px 8px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
+    .side { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+    .metrics div { background: #101816; padding: 7px 10px; display: grid; gap: 2px; }
+    .metrics span { font-size: 11px; color: var(--muted); }
+    .metrics output { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .controls { padding: 10px 12px; display: grid; gap: 9px; }
+    .ctrl { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+    .ctrl-row { display: flex; justify-content: space-between; color: var(--ink); }
+    @media (max-width: 1100px) {
+      .screen { grid-template-columns: 1fr; height: auto; }
+      .pane { height: 390px; }
+      .bottom-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) { .cams-strip { grid-template-columns: repeat(2, 1fr); } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo"></span>OmniShield<span style="color:var(--mint)">-X</span> · Double Sphere AVM &amp; Feed-Forward 3DGS</div>
+    <div class="badges">
+      <span class="badge"><span class="dot"></span><span id="metaSource">PHENIKAA · Đang tải...</span></span>
+      <span class="badge" id="metaDevice">GPU: —</span>
+      <span class="badge" id="metaLatency" role="status">AI · Chờ khung hình</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <div class="tabs" id="sceneModeTabs">
+        <button type="button" data-scene="ar" aria-pressed="true" title="Double Sphere 3D Bowl với lớp phủ AI theo khung hình">Profile 1: DS Bowl AR</button>
+        <button type="button" data-scene="gs" title="Profile 2 (6DoF): Native Non-Pinhole Feed-Forward 3D Gaussian Splatting (Zero Undistortion)">Profile 2: 3DGS 6DoF</button>
+        <button type="button" data-scene="radar" title="Sa bàn Vector tối + Khung kính mờ + Màng Fresnel">Sa bàn Radar &amp; Vector</button>
+        <button type="button" data-scene="clean" title="Chỉ hình ảnh 360° Double Sphere Bowl siêu sạch">360° Thuần</button>
+      </div>
+      <div class="tabs" id="layerControls">
+        <button type="button" id="btnSplitView" aria-pressed="false" title="Hiện thêm bản đồ 360° trong khung chính">Chia đôi 35/65</button>
+        <button type="button" id="btnAutoView" aria-pressed="true" title="Tự chuyển góc theo xi-nhan, số R và lia về góc PDC báo đỏ < 0.8m">Auto-View</button>
+        <button type="button" id="btnSigLeft" aria-pressed="false" title="Mô phỏng xi-nhan Trái → Tự mở góc Soi bánh Trái">◄ Xi-nhan Trái</button>
+        <button type="button" id="btnSigRight" aria-pressed="false" title="Mô phỏng xi-nhan Phải → Tự mở góc Soi bánh Phải">► Xi-nhan Phải</button>
+        <button type="button" id="btnGearR" aria-pressed="false" title="Mô phỏng vào số R để mở góc 3D lùi sau khi Auto-View bật">Số R</button>
+        <button type="button" id="btnArBoxes" aria-pressed="true" title="Khung góc AR 3D dày nét + khoảng cách">Khung AR</button>
+        <button type="button" id="btnPdc" aria-pressed="true" title="Radar SDF PDC 8 vùng tích hợp thẳng vào mặt đường">Radar PDC</button>
+        <button type="button" id="btnStaticShield" aria-pressed="false" title="Màng kính Fresnel tan mờ xuống mặt đường">Màng Fresnel</button>
+        <button type="button" id="btnVoxels" aria-pressed="false" title="Hiện cột Voxel 20cm kỹ thuật">Cột Voxel</button>
+        <button type="button" id="btnXray" aria-pressed="false" title="Gầm trong suốt thực thụ dùng Temporal Ground Buffer + Vệt lốp">Gầm trong suốt</button>
+        <button type="button" id="btnAdaptBowl" aria-pressed="false" title="Điều chỉnh mép vùng nền theo lề đường ước tính">Corridor</button>
+        <button type="button" id="btnShaderBlend" aria-pressed="true" title="Cân màu và trộn 2 dải tần Laplacian trong vùng chồng lấn">Ghép mượt</button>
+        <button type="button" id="btnSeamRefine" aria-pressed="true" title="Căn hình cục bộ giữa hai ảnh tại đường ghép">Căn hình</button>
+        <button type="button" id="btnForeground" aria-pressed="true" title="Dùng độ sâu LiDAR tĩnh để ép vách lòng chảo khớp gờ lề">Vách LiDAR</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="tabs" id="clipTabs" hidden></div>
+      <div class="tabs" id="rightTabs" role="group" aria-label="So sánh góc chiếu 2D">
+        <span class="tabs-label">So sánh 2D</span>
+        <button type="button" data-mode="cam-0" aria-pressed="true" aria-controls="rightPane">Trước</button>
+        <button type="button" data-mode="cam-1" aria-pressed="false" aria-controls="rightPane">Sau</button>
+        <button type="button" data-mode="cam-2" aria-pressed="false" aria-controls="rightPane">Trái</button>
+        <button type="button" data-mode="cam-3" aria-pressed="false" aria-controls="rightPane">Phải</button>
+        <button type="button" data-mode="bev" aria-pressed="false" aria-controls="rightPane">Từ trên</button>
+        <button type="button" data-mode="gt3d">So sánh 3D LiDAR GT</button>
+      </div>
+      <div class="tabs" id="highlights"></div>
+    </div>
+
+    <section class="headunit">
+      <div class="screen">
+        <!-- Main 3D view with optional 360° minimap. -->
+        <div class="pane" id="leftPane">
+          <canvas id="glMain"></canvas>
+          <div class="avm-split-divider" id="avmSplitDivider"></div>
+          <div class="avm-top-tag" id="avmTopTag"><span class="dot"></span><span>360° Trên cao · ±2.8m</span></div>
+          <div class="avm-top-hint" id="avmTopHint">Chạm vùng quanh xe để đổi góc</div>
+          <div class="ar-labels" id="labelsMain"></div>
+          <div class="avm-detail-bar" id="leftTagWrap">
+            <div class="pane-tag"><span class="dot"></span><span id="leftTitle">3D Toàn cảnh · VF 8</span></div>
+            <div class="legend" id="leftLegend">
+              <span class="sw">Xe</span>
+              <span class="sw rid">Xe máy</span>
+              <span class="sw ped">Người</span>
+              <span class="sw vec">Lề</span>
+              <span class="sw pdc">PDC</span>
+            </div>
+          </div>
+          <div class="multi-cam-bar" id="multiCamBar" hidden>
+            <button type="button" data-mview="front" aria-pressed="true" title="Cam Mũi 2D 180° Trụ">Trước</button>
+            <button type="button" data-mview="rear" aria-pressed="false" title="Cam Lùi 2D 180° Chuẩn Gương">Sau</button>
+            <button type="button" data-mview="left" aria-pressed="false" title="Soi Hông &amp; Bánh Trái">Hông Trái</button>
+            <button type="button" data-mview="right" aria-pressed="false" title="Soi Hông &amp; Bánh Phải">Hông Phải</button>
+            <button type="button" id="btnMultiAll" title="Bật nhanh 4 góc 2x2">4 Cam</button>
+            <span class="multi-cam-badge" id="multiLayoutBadge">1 Góc · Toàn khung</span>
+          </div>
+          <div class="multi-overlays" id="multiOverlays" hidden></div>
+          <div class="cam-presets" id="camPresets">
+            <button type="button" data-preset="hero" aria-pressed="true" title="Camera 3/4 từ sau-trái nhìn tới thấy trọn đầu xe + hai hông + xe máy">3D Toàn cảnh</button>
+            <button type="button" data-preset="top" title="360° Từ trên + chọn 1–4 góc cam (Trước / Sau / Hông Trái / Hông Phải)">Từ trên 360°</button>
+            <button type="button" data-preset="front" title="Nhìn qua thân xe về phía trước bằng camera phối cảnh">3D Lái trước</button>
+            <button type="button" data-preset="rear" title="Nhìn qua thân xe về phía sau bằng camera phối cảnh">3D Lùi sau</button>
+            <button type="button" data-preset="left" title="Soi sát 2 bánh Trái & mép ba-toa đỏ-trắng (Curb View)">Hông Trái</button>
+            <button type="button" data-preset="right" title="Soi sát 2 bánh Phải & làn xe máy (Curb View)">Hông Phải</button>
+          </div>
+        </div>
+
+        <!-- Synchronized perspective image, ground projection, or LiDAR reference. -->
+        <div class="pane" id="rightPane">
+          <canvas id="rightCanvas" role="img" aria-label="Góc 2D Trước"></canvas>
+          <canvas id="glGt" hidden></canvas>
+          <div class="ar-labels" id="labelsGt"></div>
+          <div class="pane-tag standalone"><span class="dot"></span><span id="rightTitle">2D Trước · Ảnh nắn méo</span></div>
+          <div class="pane-status" id="rightStatus" role="status" hidden></div>
+          <div class="pane-right-tools">
+            <button type="button" id="btnGuidelines" aria-pressed="true">Vạch dẫn hướng</button>
+            <button type="button" id="btnRect" aria-pressed="true">Ảnh phẳng</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="transport">
+      <button id="play" type="button" class="play">Phát</button>
+      <input id="timeline" type="range" min="0" max="0" value="0" aria-label="Khung hình replay">
+      <output id="timeText">Frame 0 / 0</output>
+    </div>
+
+    <div class="bottom-grid">
+      <div class="cams-strip" id="camsStrip"></div>
+      <aside class="side">
+        <div class="metrics">
+          <div><span>Thời gian suy luận</span><output id="mLatency">–</output></div>
+          <div><span>Occupancy IoU</span><output id="mIou">–</output></div>
+          <div><span>Độ phủ / Đối tượng AR</span><output id="mCov">–</output></div>
+          <div><span>Cự ly PDC ước tính</span><output id="mCounts">–</output></div>
+        </div>
+        <div class="controls">
+          <div class="ctrl">
+            <div class="ctrl-row"><span>Ngưỡng p_occ</span><b id="thVal">0.50</b></div>
+            <input id="thSlider" type="range" min="0.15" max="0.85" step="0.01" value="0.50">
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-row"><span>Ngưỡng bất định u_max</span><b id="uVal">0.85</b></div>
+            <input id="uSlider" type="range" min="0.20" max="1.00" step="0.01" value="0.85">
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script type="module">
+    import * as THREE from '/vendor/three.module.min.js';
+    import { OrbitControls } from '/vendor/OrbitControls.js';
+
+    const $ = id => document.getElementById(id);
+    const ego2w = (x, y, z) => new THREE.Vector3(-y, z, -x);
+    const VIEW_PRESETS = {
+      hero:  { pos: [-4.4, 4.9, 8.2], target: [0.25, 0.35, -1.60] },
+      front: { pos: [0, 4.8, 8.6], target: [0, 0.25, -2.40] },
+      rear:  { pos: [0, 4.8, -8.6], target: [0, 0.25, 2.40] },
+      left:  { pos: [-1.95, 1.72, 3.75], target: [-1.75, 0.22, -1.60] },
+      right: { pos: [ 1.95, 1.72, 3.75], target: [ 1.75, 0.22, -1.60] },
+    };
+
+    const COLOR_SAMPLE_W = 256, COLOR_SAMPLE_H = 144;
+    function colorSampleOffset(uv) {
+      return uv === null ? -1 : 4 * (Math.floor(uv[1] * COLOR_SAMPLE_H) * COLOR_SAMPLE_W + Math.floor(uv[0] * COLOR_SAMPLE_W));
+    }
+    const linearColor = Float32Array.from({ length: 256 }, (_, byte) => {
+      const s = byte / 255;
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+
+    function makeOverlapColorSampler(uvByCamera) {
+      const canvas = document.createElement('canvas');
+      canvas.width = COLOR_SAMPLE_W;
+      canvas.height = COLOR_SAMPLE_H;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const offsets = uvByCamera.map(uvs => uvs.map(colorSampleOffset));
+      const logLinear = linearColor.map(value => Math.log(Math.max(value, 1e-4)));
+      const median = values => {
+        values.sort((a, b) => a - b);
+        const mid = Math.floor(values.length / 2);
+        return (values[mid] + values[Math.floor((values.length - 1) / 2)]) / 2;
+      };
+
+      return (images, enabled) => {
+        const pixels = images.map((img, i) => {
+          if (!img || !enabled[i]) return null;
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        });
+        const edges = images.map(() => []);
+        for (let i = 0; i < images.length; i++) {
+          if (!pixels[i]) continue;
+          for (let j = i + 1; j < images.length; j++) {
+            if (!pixels[j]) continue;
+            const differences = [[], [], []];
+            for (let p = 0; p < offsets[i].length; p++) {
+              const a = offsets[i][p], b = offsets[j][p];
+              if (a < 0 || b < 0) continue;
+              const first = pixels[i], second = pixels[j];
+              if ([first[a], first[a + 1], first[a + 2], second[b], second[b + 1], second[b + 2]]
+                .some(v => v < 22 || v > 242)) continue;
+              for (let c = 0; c < 3; c++) differences[c].push(logLinear[second[b + c]] - logLinear[first[a + c]]);
+            }
+            if (differences[0].length < 8) continue;
+            const delta = differences.map(median);
+            const deviation = median(differences[1].map(v => Math.abs(v - delta[1])));
+            const weight = Math.min(1, differences[0].length / 20) / (1 + 4 * deviation);
+            edges[i].push({ camera: j, delta, weight });
+            edges[j].push({ camera: i, delta: delta.map(v => -v), weight });
+          }
+        }
+
+        // Fit the pairwise log gains together with a small neutral prior per camera.
+        const gains = images.map(() => [0, 0, 0]);
+        for (let pass = 0; pass < 12; pass++) {
+          for (let i = 0; i < gains.length; i++) {
+            const support = edges[i].reduce((total, edge) => total + edge.weight, 0.12);
+            for (let c = 0; c < 3; c++) {
+              gains[i][c] = edges[i].reduce((total, { camera, delta, weight }) =>
+                total + weight * (gains[camera][c] + delta[c]), 0) / support;
+            }
+          }
+        }
+        return { pixels, gains: gains.map(rgb => rgb.map(v => Math.exp(Math.max(-0.38, Math.min(0.38, v))))) };
+      };
+    }
+
+    function createBowlSeams({ rings, max_offset, offsets, displacements, pairs }) {
+      const steps = offsets.length, center = (steps - 1) / 2;
+      const maxOff = Math.max(0.30, Number(max_offset || Math.abs(offsets[offsets.length - 1]) || 0.36));
+      const zero = displacements.indexOf(0);
+      const state = pairs.map(pair => ({ ...pair, uv: pair.uv.map(map => map.map(colorSampleOffset)),
+        refine: pair.refine_uv.map(camera => camera.map(layer => layer.map(colorSampleOffset))), path: null, shift: null }));
+      const centers = new THREE.Vector4(...pairs.map(pair => pair.angle));
+      const data = new Uint8Array(rings * pairs.length * 4).fill(128);
+      const texture = new THREE.DataTexture(data, rings, pairs.length);
+      texture.minFilter = texture.magFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+
+      const strideBytes = COLOR_SAMPLE_W * 4;
+      function localDetail(img, idx) {
+        if (idx < strideBytes + 4 || idx + strideBytes + 4 >= img.length) return 0;
+        const gx = Math.abs(linearColor[img[idx + 5]] - linearColor[img[idx - 3]]);
+        const gy = Math.abs(linearColor[img[idx + strideBytes + 1]] - linearColor[img[idx - strideBytes + 1]]);
+        return Math.min(0.45, gx + gy);
+      }
+
+      function mismatch(first, second, ga, gb, i, k) {
+        const a = linearColor[first[i+1]] * ga.y, b = linearColor[second[k+1]] * gb.y;
+        const dr = Math.abs(linearColor[first[i]] * ga.x - linearColor[second[k]] * gb.x);
+        const db = Math.abs(linearColor[first[i+2]] * ga.z - linearColor[second[k+2]] * gb.z);
+        const diff = (0.23 * dr + 0.59 * Math.abs(a - b) + 0.18 * db) / (0.18 + 0.5 * (a + b));
+        // Mildly prefer routing the seam through low-detail road over high-contrast edges (bikes/curbs)
+        const edge = 0.22 * (localDetail(first, i) + localDetail(second, k));
+        return Math.min(0.95, diff + edge);
+      }
+
+      function fitPair(pair, pixels, gains, adjacent) {
+        const [a, b] = pair.cameras;
+        const first = pixels[a], second = pixels[b];
+        if (!first || !second) return new Float32Array(rings).fill(center);
+        const ga = gains[a], gb = gains[b];
+        const parent = new Uint8Array(rings * steps);
+        let previous = new Float32Array(steps);
+        let next = new Float32Array(steps);
+        for (let r = 0; r < rings; r++) {
+          for (let j = 0; j < steps; j++) {
+            const n = r * steps + j;
+            const i = pair.uv[0][n], k = pair.uv[1][n];
+            let cost = i >= 0 && k >= 0 ? mismatch(first, second, ga, gb, i, k) : 1.0;
+            cost += 0.16 * ((j - center) / center) ** 2;
+            if (adjacent && pair.path) cost += 0.014 * (j - pair.path[r]) ** 2;
+            let best = Infinity, from = j;
+            for (let p = Math.max(0, j - 2); p <= Math.min(steps - 1, j + 2); p++) {
+              const trial = previous[p] + 0.036 * (j - p) ** 2;
+              if (trial < best) { best = trial; from = p; }
+            }
+            next[j] = cost + best;
+            parent[n] = from;
+          }
+          [previous, next] = [next, previous];
+        }
+        let j = previous.indexOf(Math.min(...previous));
+        const result = new Float32Array(rings);
+        for (let r = rings - 1; r >= 0; r--) {
+          result[r] = adjacent && pair.path ? 0.45 * j + 0.55 * pair.path[r] : j;
+          j = parent[r * steps + j];
+        }
+        return result;
+      }
+
+      function refinePair(pair, pixels, gains, adjacent) {
+        const [a, b] = pair.cameras;
+        const first = pixels[a], second = pixels[b];
+        const shifts = new Float32Array(rings);
+        if (!first || !second) return shifts;
+        const ga = gains[a], gb = gains[b];
+        const [refA, refB] = pair.refine;
+        for (let r = 1; r < rings - 1; r++) {
+          let best = 0;
+          for (let candidate = 0; candidate < displacements.length; candidate++) {
+            if (candidate === zero) continue;
+            let baseFit = 0, shiftedFit = 0, nFit = 0;
+            let baseCheck = 0, shiftedCheck = 0, nCheck = 0;
+            let edgeGain = 0, nEdge = 0, maxRegression = 0;
+            for (let rr = r - 1; rr <= r + 1; rr++) {
+              const j = Math.round(pair.path[rr]);
+              const extent = rr === r ? 3 : 1;
+              for (let cc = Math.max(0, j - extent); cc <= Math.min(steps - 1, j + extent); cc++) {
+                const n = rr * steps + cc;
+                const ra = refA[zero][n], rb = refB[zero][n], da = refA[candidate][n], db = refB[candidate][n];
+                if (Math.min(ra, rb, da, db) < 0 || Math.min(first[ra+1], second[rb+1], first[da+1], second[db+1]) < 22) continue;
+                const base = mismatch(first, second, ga, gb, ra, rb);
+                const trial = mismatch(first, second, ga, gb, da, db);
+                if (Math.abs(cc - j) >= 2) {
+                  edgeGain += base - trial; nEdge++;
+                  maxRegression = Math.max(maxRegression, trial - base);
+                } else if (rr === r) { baseCheck += base; shiftedCheck += trial; nCheck++; }
+                else { baseFit += base; shiftedFit += trial; nFit++; }
+              }
+            }
+            if (nFit < 4 || nCheck < 2) continue;
+            const fitGain = (baseFit - shiftedFit) / nFit;
+            const checkGain = (baseCheck - shiftedCheck) / nCheck;
+            if (fitGain < Math.max(0.025, 0.16 * baseFit / nFit) || checkGain < Math.max(0.018, 0.10 * baseCheck / nCheck)) continue;
+            if (nEdge < 2 || edgeGain / nEdge < 0.010 || maxRegression > 0.060) continue;
+            const benefit = fitGain - 0.015 * Math.abs(displacements[candidate]) / 0.12;
+            if (benefit > best) { best = benefit; shifts[r] = displacements[candidate]; }
+          }
+        }
+        return shifts.map((d, r) => {
+          if (d === 0) return 0;
+          const before = d * shifts[r-1] > 0 ? shifts[r-1] : d;
+          const after = d * shifts[r+1] > 0 ? shifts[r+1] : d;
+          const local = 0.60 * d + 0.10 * (before + after);
+          return adjacent && pair.shift && pair.shift[r] * d > 0 ? 0.50 * local + 0.50 * pair.shift[r] : local;
+        });
+      }
+
+      function sample(pixels, gains, adjacent) {
+        state.forEach((pair, i) => {
+          pair.path = fitPair(pair, pixels, gains, adjacent);
+          pair.shift = refinePair(pair, pixels, gains, adjacent);
+          for (let r = 0; r < rings; r++) {
+            const angle = (pair.path[r] - center) * (offsets[1] - offsets[0]);
+            const pixel = 4 * (i * rings + r);
+            data[pixel] = Math.max(0, Math.min(255, Math.round(128 + 126 * angle / maxOff)));
+            data[pixel+1] = Math.max(0, Math.min(255, Math.round(128 + 126 * pair.shift[r] / 0.24)));
+          }
+        });
+        texture.needsUpdate = true;
+      }
+
+      function update(stage, enabled) {
+        const uniforms = stage.bowlMat.uniforms;
+        uniforms.uSeamActive.value = enabled && stage.camera.isPerspectiveCamera ? 1 : 0;
+        uniforms.uSeamPaths.value = texture;
+        uniforms.uSeamCenters.value.copy(centers);
+        uniforms.uSeamRings.value = rings;
+        if (uniforms.uSeamMaxOffset) uniforms.uSeamMaxOffset.value = maxOff;
+      }
+      return { sample, update };
+    }
+
+    // ------------------------------------------------------------------
+    // 1. Real-Scale VinFast VF 8 SUV (4.750m x 1.934m x 1.667m, Wheelbase 2.950m)
+    //    Exact match to PHENIKAA Sensor_Extrinsics.json:
+    //    Rear axle x_ego=-1.449m, Front axle x_ego=+1.501m, Bumpers [-2.399, +2.351]m,
+    //    Side mirrors (CAM_F_L/R) at x_ego=+0.993m, y=+-0.970m, z=1.029m, Track=1.640m
+    // ------------------------------------------------------------------
+    function makeContactShadowTexture(opacity) {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 256;
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.filter = 'blur(14px)';
+      ctx.fillStyle = `rgba(0,0,0,${opacity})`;
+      ctx.beginPath();
+      ctx.roundRect(18, 22, c.width - 36, c.height - 44, 24);
+      ctx.fill();
+      ctx.filter = 'none';
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.NoColorSpace;
+      return t;
+    }
+
+    function buildSuvMesh(vSpec) {
+      const group = new THREE.Group();
+      const s = vSpec || {
+        length_m: 4.750, width_m: 1.934, height_m: 1.667, wheelbase_m: 2.950,
+        track_width_m: 1.640, ground_clearance_m: 0.175, tire_radius_m: 0.364, tire_width_m: 0.245,
+        x_rear_bumper_m: -2.399, x_front_bumper_m: 2.351, x_rear_axle_m: -1.449, x_front_axle_m: 1.501,
+        x_center_m: -0.024, mirror_x_m: 0.993, mirror_y_m: 0.970, mirror_z_m: 1.029,
+      };
+      // Three.js Z = -x_ego: front bumper at zFront = -2.351, rear bumper at zRear = +2.399
+      const zFront = -s.x_front_bumper_m;
+      const zRear  = -s.x_rear_bumper_m;
+      const zMid   = -s.x_center_m;
+      const zAxleF = -s.x_front_axle_m;
+      const zAxleR = -s.x_rear_axle_m;
+      const halfW  = s.width_m * 0.5;
+      const trackHalf = s.track_width_m * 0.5;
+      const H = s.height_m;
+      const gc = s.ground_clearance_m;
+
+      // Helper: Smooth lofted rounded-stadium prism across Y-rings with guaranteed outward normals
+      function buildLoftGeo(rings, segsPerCorner = 4, capTop = true) {
+        const ringPts = rings.map(rg => {
+          const pts = [];
+          const hx = Math.max(0.05, rg.hw - rg.r), zcF = rg.zF + rg.r, zcR = rg.zR - rg.r, r = rg.r;
+          // 4 corners in CCW order viewed from +Y: FR (+x,-z), FL (-x,-z), RL (-x,+z), RR (+x,+z)
+          const corners = [
+            [ hx, zcF, 0.0, Math.PI * 0.5],
+            [-hx, zcF, Math.PI * 0.5, Math.PI],
+            [-hx, zcR, Math.PI, Math.PI * 1.5],
+            [ hx, zcR, Math.PI * 1.5, Math.PI * 2.0],
+          ];
+          for (const [cx, cz, a0, a1] of corners) {
+            for (let k = 0; k <= segsPerCorner; k++) {
+              const a = a0 + (a1 - a0) * (k / segsPerCorner);
+              pts.push([cx + Math.cos(a) * r, rg.y, cz - Math.sin(a) * r]);
+            }
+          }
+          return pts;
+        });
+        const nRing = ringPts[0].length;
+        const pos = [];
+        for (const rp of ringPts) for (const p of rp) pos.push(p[0], p[1], p[2]);
+        const idx = [];
+        for (let ri = 0; ri < ringPts.length - 1; ri++) {
+          const r0 = ri * nRing, r1 = (ri + 1) * nRing;
+          for (let j = 0; j < nRing; j++) {
+            const jn = (j + 1) % nRing;
+            idx.push(r0 + j, r0 + jn, r1 + jn, r0 + j, r1 + jn, r1 + j);
+          }
+        }
+        if (capTop) {
+          const topRg = rings[rings.length - 1];
+          const cIdx = pos.length / 3;
+          pos.push(0, topRg.y, 0.5 * (topRg.zF + topRg.zR));
+          const rTop = (ringPts.length - 1) * nRing;
+          for (let j = 0; j < nRing; j++) idx.push(cIdx, rTop + j, rTop + ((j + 1) % nRing));
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setIndex(idx);
+        geo.computeVertexNormals();
+        return geo;
+      }
+
+      // Tight inset underbody baseplate (never peeks beyond bumpers!)
+      const bpShape = new THREE.Shape();
+      const bx = halfW - 0.14, bzF = zFront + 0.20, bzR = zRear - 0.20, br = 0.28;
+      bpShape.moveTo(-bx + br, bzF);
+      bpShape.lineTo( bx - br, bzF);
+      bpShape.quadraticCurveTo( bx, bzF,  bx, bzF + br);
+      bpShape.lineTo( bx, bzR - br);
+      bpShape.quadraticCurveTo( bx, bzR,  bx - br, bzR);
+      bpShape.lineTo(-bx + br, bzR);
+      bpShape.quadraticCurveTo(-bx, bzR, -bx, bzR - br);
+      bpShape.lineTo(-bx, bzF + br);
+      bpShape.quadraticCurveTo(-bx, bzF, -bx + br, bzF);
+      const baseplateGeo = new THREE.ShapeGeometry(bpShape, 12);
+      baseplateGeo.rotateX(Math.PI / 2);
+      const baseplate = new THREE.Mesh(baseplateGeo, new THREE.MeshBasicMaterial({ color: 0x101415, side: THREE.DoubleSide }));
+      baseplate.position.set(0, 0.011, 0);
+      group.add(baseplate);
+
+      const solidShadowTex = makeContactShadowTexture(0.54);
+      const xrayShadowTex = makeContactShadowTexture(0.14);
+      const shadowMat = new THREE.MeshBasicMaterial({
+        map: solidShadowTex, transparent: true, depthWrite: false, toneMapped: false,
+      });
+      const shadowPlane = new THREE.Mesh(new THREE.PlaneGeometry(s.width_m - 0.02, s.length_m - 0.02), shadowMat);
+      shadowPlane.rotation.x = -Math.PI / 2;
+      shadowPlane.position.set(0, 0.007, zMid);
+      group.add(shadowPlane);
+
+      const tireShadowTex = makeContactShadowTexture(0.74);
+      const tireShadowMat = new THREE.MeshBasicMaterial({
+        map: tireShadowTex, transparent: true, depthWrite: false, toneMapped: false,
+      });
+      const tireShadowGeo = new THREE.PlaneGeometry(s.tire_width_m + 0.14, s.tire_radius_m * 2.10);
+      tireShadowGeo.rotateX(-Math.PI / 2);
+
+      // Studio-lit automotive PBR materials (paired with scene.environment PMREM!)
+      const paintMat = new THREE.MeshPhysicalMaterial({
+        color: 0xdce4e6, metalness: 0.55, roughness: 0.22, clearcoat: 1.0, clearcoatRoughness: 0.06, envMapIntensity: 1.35,
+      });
+      const glassMat = new THREE.MeshPhysicalMaterial({
+        color: 0x0d1b24, metalness: 0.15, roughness: 0.04, clearcoat: 1.0, clearcoatRoughness: 0.04, envMapIntensity: 1.55,
+      });
+      const trimMat = new THREE.MeshStandardMaterial({ color: 0x1a2022, roughness: 0.55, metalness: 0.28, envMapIntensity: 0.9 });
+      const satinMat = new THREE.MeshStandardMaterial({ color: 0x9aa6aa, roughness: 0.32, metalness: 0.72, envMapIntensity: 1.2 });
+
+      // 1) Sculpted Lower SUV Body with beveled bumper & beltline shoulder flare
+      const lowerGeo = buildLoftGeo([
+        { y: gc + 0.04, zF: zFront + 0.08, zR: zRear - 0.08, hw: halfW - 0.08, r: 0.24 },
+        { y: 0.34,      zF: zFront + 0.01, zR: zRear - 0.01, hw: halfW - 0.01, r: 0.26 },
+        { y: 0.68,      zF: zFront + 0.03, zR: zRear - 0.03, hw: halfW,        r: 0.26 },
+        { y: 1.00,      zF: zFront + 0.22, zR: zRear - 0.09, hw: halfW - 0.04, r: 0.26 },
+        { y: 1.06,      zF: zFront + 1.04, zR: zRear - 0.20, hw: halfW - 0.06, r: 0.24 },
+      ], 4, true);
+      group.add(new THREE.Mesh(lowerGeo, paintMat));
+
+      // Subtle sculpted hood bulge
+      const hoodGeo = buildLoftGeo([
+        { y: 0.96, zF: zFront + 0.24, zR: zFront + 1.25, hw: 0.64, r: 0.18 },
+        { y: 1.03, zF: zFront + 0.38, zR: zFront + 1.28, hw: 0.52, r: 0.14 },
+      ], 3, true);
+      group.add(new THREE.Mesh(hoodGeo, paintMat));
+
+      // 2) Tapered Upper SUV Greenhouse (true tumblehome taper, zero protruding boxes!)
+      const cabBot = { y: 1.03,     zF: zFront + 1.14, zR: zRear - 0.22, hw: halfW - 0.07, r: 0.22 };
+      const cabTop = { y: H - 0.04, zF: zFront + 1.88, zR: zRear - 0.78, hw: halfW - 0.23, r: 0.18 };
+      const ringAt = (t, outHw = 0.0, outZ = 0.0) => ({
+        y: THREE.MathUtils.lerp(cabBot.y, cabTop.y, t),
+        zF: THREE.MathUtils.lerp(cabBot.zF, cabTop.zF, t) - outZ,
+        zR: THREE.MathUtils.lerp(cabBot.zR, cabTop.zR, t) + outZ,
+        hw: THREE.MathUtils.lerp(cabBot.hw, cabTop.hw, t) + outHw,
+        r: THREE.MathUtils.lerp(cabBot.r, cabTop.r, t),
+      });
+      const cabinGeo = buildLoftGeo([
+        cabBot,
+        ringAt(0.52),
+        cabTop,
+        { y: H, zF: zFront + 1.96, zR: zRear - 0.86, hw: halfW - 0.26, r: 0.16 },
+      ], 4, true);
+      group.add(new THREE.Mesh(cabinGeo, paintMat));
+
+      // 3) Flush 360-deg Tapered Glasshouse Wrap (windshield + side windows + rear liftgate glass)
+      const glassWrapGeo = buildLoftGeo([
+        ringAt(0.08, 0.007, 0.007),
+        ringAt(0.50, 0.007, 0.007),
+        ringAt(0.88, 0.007, 0.007),
+      ], 4, false);
+      group.add(new THREE.Mesh(glassWrapGeo, glassMat));
+
+      // Flush Sloped Corner & Mid Pillars hugging the exact tapered glasshouse
+      const upY = new THREE.Vector3(0, 1, 0);
+      const addSlopedPillar = (pBot, pTop, rx, rz, mat) => {
+        const dir = pTop.clone().sub(pBot);
+        const len = dir.length();
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(rx, len, rz), mat);
+        mesh.position.copy(pBot).addScaledVector(dir, 0.5);
+        mesh.quaternion.setFromUnitVectors(upY, dir.normalize());
+        group.add(mesh);
+      };
+      const rb = ringAt(0.04, 0.011, 0.011);
+      const rt = ringAt(0.92, 0.011, 0.011);
+      for (const side of [-1, 1]) {
+        // Painted body A-pillar (front corner) & D-pillar (rear corner)
+        const hxb = rb.hw - rb.r, hxt = rt.hw - rt.r;
+        const off = 0.7071;
+        addSlopedPillar(
+          new THREE.Vector3(side * (hxb + off * rb.r), rb.y, rb.zF + rb.r - off * rb.r),
+          new THREE.Vector3(side * (hxt + off * rt.r), rt.y, rt.zF + rt.r - off * rt.r),
+          0.085, 0.085, paintMat
+        );
+        addSlopedPillar(
+          new THREE.Vector3(side * (hxb + off * rb.r), rb.y, rb.zR - rb.r + off * rb.r),
+          new THREE.Vector3(side * (hxt + off * rt.r), rt.y, rt.zR - rt.r + off * rt.r),
+          0.095, 0.095, paintMat
+        );
+        // Gloss/matte B-pillar (z=-0.02) & C-pillar (z=+0.96) dividing side glass seamlessly
+        for (const zPil of [-0.02, 0.96]) {
+          addSlopedPillar(
+            new THREE.Vector3(side * (rb.hw - 0.002), rb.y, zPil),
+            new THREE.Vector3(side * (rt.hw - 0.002), rt.y, zPil),
+            0.018, 0.085, trimMat
+          );
+        }
+      }
+
+      // Flush panoramic sunroof strictly centered inside the tapered roof bounds [-0.391 .. +1.539]
+      const panoRoof = new THREE.Mesh(new THREE.BoxGeometry(s.width_m - 0.76, 0.014, 1.34), glassMat);
+      panoRoof.position.set(0, H - 0.002, 0.54);
+      group.add(panoRoof);
+
+      // Lower matte trim skirt, dark front air dam, satin-silver front & rear skid plates
+      const skirt = new THREE.Mesh(new THREE.BoxGeometry(s.width_m - 0.04, 0.11, s.length_m - 0.16), trimMat);
+      skirt.position.set(0, gc + 0.05, zMid);
+      const grille = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.20, 0.06), trimMat);
+      grille.position.set(0, 0.40, zFront + 0.01);
+      const skidF = new THREE.Mesh(new THREE.BoxGeometry(1.04, 0.07, 0.08), satinMat);
+      skidF.position.set(0, gc + 0.08, zFront + 0.02);
+      const skidR = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.08, 0.08), satinMat);
+      skidR.position.set(0, gc + 0.10, zRear - 0.02);
+      group.add(skirt, grille, skidF, skidR);
+
+      // 4 Wheels (tires, dark alloy barrels, diamond-cut 5-twin-spoke pattern)
+      const tireGeo = new THREE.CylinderGeometry(s.tire_radius_m, s.tire_radius_m, s.tire_width_m, 28);
+      tireGeo.rotateZ(Math.PI / 2);
+      const rimGeo = new THREE.CylinderGeometry(s.tire_radius_m * 0.66, s.tire_radius_m * 0.66, s.tire_width_m + 0.012, 20);
+      rimGeo.rotateZ(Math.PI / 2);
+      const spokeGeo = new THREE.BoxGeometry(s.tire_width_m + 0.024, s.tire_radius_m * 1.20, 0.046);
+      const tireMat = new THREE.MeshStandardMaterial({ color: 0x151819, roughness: 0.85, metalness: 0.05 });
+      const rimMat = new THREE.MeshStandardMaterial({ color: 0x1e2427, metalness: 0.78, roughness: 0.26, envMapIntensity: 1.2 });
+      const spokeMat = new THREE.MeshStandardMaterial({ color: 0xe6eeec, metalness: 0.92, roughness: 0.16, envMapIntensity: 1.4 });
+      const archGeo = new THREE.TorusGeometry(s.tire_radius_m + 0.06, 0.045, 8, 18, Math.PI);
+      archGeo.rotateY(Math.PI / 2);
+      const frontWheelGroups = [];
+      const wheelX = Math.max(trackHalf, halfW - s.tire_width_m * 0.48);
+      for (const zAxle of [zAxleF, zAxleR]) {
+        for (const xSide of [-wheelX, wheelX]) {
+          const wGrp = new THREE.Group();
+          wGrp.position.set(xSide, s.tire_radius_m, zAxle);
+          wGrp.add(new THREE.Mesh(tireGeo, tireMat), new THREE.Mesh(rimGeo, rimMat));
+          for (let sp = 0; sp < 5; sp++) {
+            const spoke = new THREE.Mesh(spokeGeo, spokeMat);
+            spoke.rotation.x = sp * (Math.PI / 5);
+            wGrp.add(spoke);
+          }
+          group.add(wGrp);
+          if (zAxle === zAxleF) frontWheelGroups.push(wGrp);
+          const arch = new THREE.Mesh(archGeo, trimMat);
+          arch.position.set(Math.sign(xSide) * (halfW - 0.03), s.tire_radius_m + 0.02, zAxle);
+          group.add(arch);
+          const ts = new THREE.Mesh(tireShadowGeo, tireShadowMat);
+          ts.position.set(xSide, 0.008, zAxle);
+          group.add(ts);
+        }
+      }
+
+      // Exact side-mirror positions matching CAM_F_L / CAM_F_R mounts + amber LED turn-signal strips
+      const mirrorGeo = new THREE.BoxGeometry(0.18, 0.095, 0.14);
+      const sigMatL = new THREE.MeshBasicMaterial({ color: 0x3b2f10 });
+      const sigMatR = new THREE.MeshBasicMaterial({ color: 0x3b2f10 });
+      for (const [sx, sm] of [[-(s.mirror_y_m + 0.02), sigMatL], [s.mirror_y_m + 0.02, sigMatR]]) {
+        const mir = new THREE.Mesh(mirrorGeo, paintMat);
+        mir.position.set(sx, s.mirror_z_m + 0.03, -s.mirror_x_m);
+        const led = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.022, 0.02), sm);
+        led.position.set(sx, s.mirror_z_m + 0.03, -s.mirror_x_m - 0.072);
+        group.add(mir, led);
+      }
+
+      // Signature VinFast V-shaped LED DRL front wing + crimson taillight flush inside rounded bumpers
+      const headMat = new THREE.MeshBasicMaterial({ color: 0xfff8e1 });
+      const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2228 });
+      const tailGlow = new THREE.MeshBasicMaterial({ color: 0x8a0f14 });
+      for (const side of [-1, 1]) {
+        const wingF = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.030, 0.04), headMat);
+        wingF.position.set(side * 0.35, 0.78, zFront + 0.01);
+        wingF.rotation.z = side * 0.14;
+        const lampF = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.055, 0.04), headMat);
+        lampF.position.set(side * 0.56, 0.62, zFront + 0.015);
+        group.add(wingF, lampF);
+
+        const wingR = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.036, 0.04), tailMat);
+        wingR.position.set(side * 0.35, 0.94, zRear - 0.015);
+        wingR.rotation.z = -side * 0.11;
+        group.add(wingR);
+      }
+      const tailHousing = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.075, 0.03), tailGlow);
+      tailHousing.position.set(0, 0.93, zRear - 0.025);
+      group.add(tailHousing);
+
+      const wireOutline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(lowerGeo, 28),
+        new THREE.LineBasicMaterial({ color: 0x90f3be, transparent: true, opacity: 0.62 })
+      );
+      wireOutline.visible = false;
+      group.add(wireOutline);
+
+      const setXray = (enabled) => {
+        for (const m of [paintMat, glassMat, trimMat, satinMat]) {
+          m.transparent = enabled;
+          m.opacity = enabled ? 0.18 : 1.0;
+          m.depthWrite = !enabled;
+          m.needsUpdate = true;
+        }
+        baseplate.visible = !enabled;
+        shadowMat.map = enabled ? xrayShadowTex : solidShadowTex;
+        shadowMat.needsUpdate = true;
+        wireOutline.visible = enabled;
+      };
+      const setSteer = (rad) => {
+        for (const wg of frontWheelGroups) wg.rotation.y = rad;
+      };
+      const setTurnSignal = (dir, blinkOn) => {
+        sigMatL.color.setHex(dir === 'left' && blinkOn ? 0xffb300 : 0x3b2f10);
+        sigMatR.color.setHex(dir === 'right' && blinkOn ? 0xffb300 : 0x3b2f10);
+      };
+      return { group, setXray, setSteer, setTurnSignal };
+    }
+
+    // ------------------------------------------------------------------
+    // 2. Anti-Aliased Instanced AR Corner-Brackets (1 Draw Call, Thick Crisp Bars!)
+    // ------------------------------------------------------------------
+    function createArObjectPool() {
+      const STYLES = {
+        vehicle:    { hex: 0x38bdf8, label: 'Xe' },
+        rider:      { hex: 0xfb923c, label: 'Xe máy' },
+        pedestrian: { hex: 0xf472b6, label: 'Người' },
+      };
+
+      const barGeo = new THREE.BoxGeometry(1, 1, 1);
+      const padGeo = new THREE.PlaneGeometry(1, 1);
+      padGeo.rotateX(-Math.PI / 2);
+      const prismGeo = new THREE.BoxGeometry(1, 1, 1);
+      prismGeo.translate(0, 0.5, 0);
+
+      const padMats = {}, prismMats = {};
+      for (const [k, s] of Object.entries(STYLES)) {
+        padMats[k] = new THREE.MeshBasicMaterial({ color: s.hex, transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide });
+        prismMats[k] = new THREE.MeshPhysicalMaterial({ color: s.hex, transparent: true, opacity: 0.14, roughness: 0.2, metalness: 0.1, depthWrite: false });
+      }
+
+      // 24 corner L-brackets + 4 ground perimeter bars = 28 thick anti-aliased segments per object
+      const MAX_OBJECTS = 32;
+      const BARS_PER_OBJ = 28;
+      const dummy = new THREE.Object3D();
+      const objMat4 = new THREE.Matrix4();
+      const localMat4 = new THREE.Matrix4();
+      const tmpColor = new THREE.Color();
+
+      function makeStagePool(parentGroup) {
+        const barMesh = new THREE.InstancedMesh(
+          barGeo,
+          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.94 }),
+          MAX_OBJECTS * BARS_PER_OBJ
+        );
+        barMesh.count = 0;
+        barMesh.frustumCulled = false;
+        barMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        parentGroup.add(barMesh);
+
+        const extras = [];
+        function sync(objects, visible, frostedPrism) {
+          const list = (visible && objects) ? objects.slice(0, MAX_OBJECTS) : [];
+          let bIdx = 0;
+          const t = 0.032; // crisp 3.2cm beam thickness (no 1px WebGL jagged lines!)
+
+          while (extras.length < list.length) {
+            const g = new THREE.Group();
+            const pad = new THREE.Mesh(padGeo, padMats.vehicle); pad.position.y = 0.022;
+            const prism = new THREE.Mesh(prismGeo, prismMats.vehicle);
+            g.add(pad, prism);
+            parentGroup.add(g);
+            extras.push({ g, pad, prism });
+          }
+
+          for (let i = 0; i < extras.length; i++) {
+            const slot = extras[i];
+            if (i >= list.length) { slot.g.visible = false; continue; }
+            const o = list[i];
+            const cls = STYLES[o.cls] ? o.cls : 'vehicle';
+            tmpColor.setHex(STYLES[cls].hex);
+
+            slot.g.visible = true;
+            slot.g.position.set(-o.y, o.z, -o.x);
+            slot.g.rotation.y = o.yaw;
+            slot.g.scale.set(o.w, o.h, o.l);
+            slot.pad.material = padMats[cls];
+            slot.prism.material = prismMats[cls];
+            slot.prism.visible = frostedPrism;
+
+            objMat4.compose(
+              new THREE.Vector3(-o.y, o.z, -o.x),
+              new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.yaw),
+              new THREE.Vector3(1, 1, 1)
+            );
+            const hw = o.w * 0.5, hh = o.h, hl = o.l * 0.5;
+            const lx = Math.min(0.42, o.w * 0.28), ly = Math.min(0.42, o.h * 0.28), lz = Math.min(0.55, o.l * 0.24);
+            const pushBar = (px, py, pz, sx, sy, sz) => {
+              dummy.position.set(px, py, pz);
+              dummy.rotation.set(0, 0, 0);
+              dummy.scale.set(sx, sy, sz);
+              dummy.updateMatrix();
+              localMat4.multiplyMatrices(objMat4, dummy.matrix);
+              barMesh.setMatrixAt(bIdx, localMat4);
+              barMesh.setColorAt(bIdx, tmpColor);
+              bIdx++;
+            };
+
+            // 8 corners x 3 orthogonal L-bracket bars
+            for (const sx of [-1, 1]) {
+              for (const sy of [0, 1]) {
+                for (const sz of [-1, 1]) {
+                  const y0 = sy * hh;
+                  const dy = sy === 0 ? ly * 0.5 : -ly * 0.5;
+                  pushBar(sx * (hw - lx * 0.5), y0, sz * hl, lx, t, t);
+                  pushBar(sx * hw, y0 + dy, sz * hl, t, ly, t);
+                  pushBar(sx * hw, y0, sz * (hl - lz * 0.5), t, t, lz);
+                }
+              }
+            }
+            // 4 crisp ground footprint frame rails at y = 0.025
+            pushBar(0, 0.025, -hl, o.w, t * 0.7, t);
+            pushBar(0, 0.025,  hl, o.w, t * 0.7, t);
+            pushBar(-hw, 0.025, 0, t, t * 0.7, o.l);
+            pushBar( hw, 0.025, 0, t, t * 0.7, o.l);
+          }
+
+          barMesh.count = bIdx;
+          barMesh.instanceMatrix.needsUpdate = true;
+          if (barMesh.instanceColor) barMesh.instanceColor.needsUpdate = true;
+        }
+        return { sync };
+      }
+
+      return { makeStagePool, STYLES };
+    }
+
+    // ------------------------------------------------------------------
+    // 3. Zero-Pass Height-Faded Fresnel Shield for Static Occupancy
+    // ------------------------------------------------------------------
+    function createFresnelShieldMaterial() {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uBaseColor: { value: new THREE.Color(0x38bdf8) },
+          uEdgeColor: { value: new THREE.Color(0x90f3be) },
+          uBaseAlpha: { value: 0.10 },
+          uEdgeAlpha: { value: 0.68 },
+        },
+        vertexShader: `
+          attribute float aAo;
+          varying vec3 vNormalV;
+          varying vec3 vViewDir;
+          varying float vWorldY;
+          varying float vAo;
+          void main() {
+            vAo = aAo;
+            vWorldY = position.y;
+            vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+            vNormalV = normalize(normalMatrix * normal);
+            vViewDir = normalize(-mvPos.xyz);
+            gl_Position = projectionMatrix * mvPos;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uBaseColor;
+          uniform vec3 uEdgeColor;
+          uniform float uBaseAlpha;
+          uniform float uEdgeAlpha;
+          varying vec3 vNormalV;
+          varying vec3 vViewDir;
+          varying float vWorldY;
+          varying float vAo;
+          void main() {
+            float ndv = abs(dot(normalize(vNormalV), normalize(vViewDir)));
+            float fresnel = pow(1.0 - clamp(ndv, 0.0, 1.0), 2.1);
+            // Zero-pass soft ground intersection fade (melts seamlessly into asphalt)
+            float groundFade = smoothstep(0.02, 0.34, vWorldY);
+            vec3 col = mix(uBaseColor, uEdgeColor, fresnel) * (0.55 + 0.45 * vAo);
+            float alpha = mix(uBaseAlpha, uEdgeAlpha, fresnel) * groundFade;
+            gl_FragColor = vec4(col, alpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.FrontSide,
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // 4. Exact Closed-Form KB4 Forward Projection GLSL (0.000px periphery error!)
+    //    + Ping-Pong Temporal Ground Buffer (Double Sphere kept for 3DGS Ray-LUT inversion)
+    // ------------------------------------------------------------------
+    const KB4_GLSL_HELPERS = `
+      float projectCamKB4(
+        float maskBit, mat4 T, vec2 fxy, vec2 cxy, float skew, vec4 kd, float maxTh,
+        vec2 imgHW, vec4 vc, vec2 camXY, vec2 camFwd, float bottomCropPx, vec3 egoPos,
+        out vec2 uvOut, out float cosOut, out float cos3DOut, out float borderOut
+      ) {
+        uvOut = vec2(0.0); cosOut = -10.0; cos3DOut = -1.0; borderOut = 0.0;
+        if (maskBit < 0.5) return 0.0;
+        vec2 delta = egoPos.xy - camXY;
+        float dLen = max(length(delta), 1e-4);
+        vec2 fwd2 = camFwd / max(length(camFwd), 1e-5);
+        float cosDir = dot(delta, fwd2) / dLen;
+        // Preserve full 190-deg fisheye FOV past the bumper/door plane (eliminates 4-corner vehicle cuts!)
+        if (cosDir <= -0.26) return 0.0;
+        vec3 xyz = (T * vec4(egoPos, 1.0)).xyz;
+        float rad = length(xyz.xy);
+        float theta = atan(max(rad, 1e-6), xyz.z);
+        if (theta > maxTh) return 0.0;
+        float t2 = theta * theta;
+        float rDist = theta * (1.0 + t2 * (kd.x + t2 * (kd.y + t2 * (kd.z + t2 * kd.w))));
+        vec2 uvPlane = xyz.xy * (rDist / max(rad, 1e-6));
+        vec2 uvPx = vec2(uvPlane.x * fxy.x + uvPlane.y * skew + cxy.x, uvPlane.y * fxy.y + cxy.y);
+        if (vc.z > 0.0 && length(uvPx - vc.xy) > vc.z) return 0.0;
+        float maxY = imgHW.y - 0.5 - bottomCropPx;
+        if (uvPx.x < -0.5 || uvPx.y < -0.5 || uvPx.x >= imgHW.x - 0.5 || uvPx.y >= maxY) return 0.0;
+        float bx = min(uvPx.x + 0.5, imgHW.x - 0.5 - uvPx.x);
+        float by = min(uvPx.y + 0.5, maxY - uvPx.y);
+        float edge = min(bx, by);
+        if (vc.z > 0.0) edge = min(edge, vc.z - length(uvPx - vc.xy));
+        float opticalMargin = maxTh - theta;
+        borderOut = smoothstep(0.0, 32.0, edge)
+          * smoothstep(-0.26, 0.08, cosDir) * smoothstep(0.0, 0.10, opticalMargin);
+        cosOut = cosDir;
+        cos3DOut = cos(theta);
+        uvOut = vec2((uvPx.x + 0.5) / imgHW.x, 1.0 - (uvPx.y + 0.5) / imgHW.y);
+        return 1.0;
+      }
+    `;
+
+    function makeCamUniforms(camTextures, calibs) {
+      return {
+        uCam0: { value: camTextures[0] }, uCam1: { value: camTextures[1] },
+        uCam2: { value: camTextures[2] }, uCam3: { value: camTextures[3] },
+        uCamT: { value: calibs.map(c => new THREE.Matrix4().set(...c.t_cam_from_ego)) },
+        uCamFxy: { value: calibs.map(c => new THREE.Vector2(...c.fxy)) },
+        uCamCxy: { value: calibs.map(c => new THREE.Vector2(...c.cxy)) },
+        uCamSkew: { value: calibs.map(c => c.skew || 0.0) },
+        uCamK: { value: calibs.map(c => new THREE.Vector4(...c.k)) },
+        uCamMaxTh: { value: calibs.map(c => c.max_theta_rad) },
+        uCamHW: { value: calibs.map(c => new THREE.Vector2(c.hw[1], c.hw[0])) },
+        uCamVC: { value: calibs.map(c => new THREE.Vector4(c.valid_circle[0], c.valid_circle[1], c.valid_circle[2], 0.0)) },
+        uCamXY: { value: calibs.map(c => new THREE.Vector2(...c.cam_xy)) },
+        uCamFwd: { value: calibs.map(c => new THREE.Vector2(...c.cam_fwd)) },
+        uCamOrigin: { value: calibs.map(c => new THREE.Vector3(...c.cam_origin)) },
+        uCamGain: { value: [new THREE.Vector3(1,1,1), new THREE.Vector3(1,1,1), new THREE.Vector3(1,1,1), new THREE.Vector3(1,1,1)] },
+        uCamMask: { value: new THREE.Vector4(1, 1, 1, 1) },
+      };
+    }
+
+    function createTemporalGroundPipeline(renderer, camTextures, calibs, groundZ) {
+      const rtOpts = {
+        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat, type: THREE.UnsignedByteType,
+        depthBuffer: false, stencilBuffer: false,
+      };
+      let rtSrc = new THREE.WebGLRenderTarget(512, 512, rtOpts);
+      let rtDst = new THREE.WebGLRenderTarget(512, 512, rtOpts);
+
+      const orthoScene = new THREE.Scene();
+      const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      // Pass A: Copy seed JPEG (sRGB -> Linear) into rtSrc on timeline jump
+      const seedMat = new THREE.ShaderMaterial({
+        uniforms: { uSeed: { value: null } },
+        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+        fragmentShader: `uniform sampler2D uSeed; varying vec2 vUv; void main(){ gl_FragColor = vec4(texture2D(uSeed, vUv).rgb, 1.0); }`,
+      });
+
+      // Pass B: Odometry Ping-Pong Warp + Live Camera Outer Refresh (Exact KB4)
+      const warpMat = new THREE.ShaderMaterial({
+        uniforms: {
+          ...makeCamUniforms(camTextures, calibs),
+          uPrevGround: { value: rtSrc.texture },
+          uOdom: { value: new THREE.Vector3(0, 0, 0) }, // (dx, dy, dyaw) p_prev -> p_curr
+          uGroundZ: { value: groundZ },
+          uGroundPlane: { value: new THREE.Vector3(0, 0, groundZ) },
+        },
+        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+        fragmentShader: `
+          uniform sampler2D uCam0; uniform sampler2D uCam1; uniform sampler2D uCam2; uniform sampler2D uCam3;
+          uniform mat4 uCamT[4]; uniform vec2 uCamFxy[4]; uniform vec2 uCamCxy[4]; uniform float uCamSkew[4]; uniform vec4 uCamK[4];
+          uniform float uCamMaxTh[4]; uniform vec2 uCamHW[4]; uniform vec4 uCamVC[4];
+          uniform vec2 uCamXY[4]; uniform vec2 uCamFwd[4]; uniform vec3 uCamGain[4];
+          uniform vec4 uCamMask;
+          uniform sampler2D uPrevGround;
+          uniform vec3 uOdom;
+          uniform float uGroundZ;
+          uniform vec3 uGroundPlane;
+          varying vec2 vUv;
+          ${KB4_GLSL_HELPERS}
+          void main() {
+            // World ego XY in [-3.2, +3.2]m
+            vec2 pCurr = vUv * 6.4 - 3.2;
+            // Inverse transform: p_prev = R(-dyaw) * (p_curr - vec2(dx, dy))
+            vec2 dp = pCurr - uOdom.xy;
+            float c = cos(-uOdom.z), s = sin(-uOdom.z);
+            vec2 pPrev = vec2(c * dp.x - s * dp.y, s * dp.x + c * dp.y);
+            vec2 prevUv = (pPrev + 3.2) / 6.4;
+            vec4 hist = vec4(0.10, 0.11, 0.11, 0.0);
+            if (prevUv.x >= 0.0 && prevUv.x <= 1.0 && prevUv.y >= 0.0 && prevUv.y <= 1.0) {
+              hist = texture2D(uPrevGround, prevUv);
+            }
+
+            // Outside the real VinFast VF 8 chassis footprint ([-2.40, +2.35] x [-0.97, +0.97]), refresh with live cameras
+            bool insideBody = (pCurr.x > -2.40 && pCurr.x < 2.36 && abs(pCurr.y) < 0.97);
+            if (!insideBody) {
+              vec3 egoPos = vec3(pCurr, dot(uGroundPlane, vec3(pCurr, 1.0)));
+              vec2 uv0, uv1, uv2, uv3; float c0, c1, c2, c3, t0, t1, t2, t3, b0, b1, b2, b3;
+              float v0 = projectCamKB4(uCamMask.x, uCamT[0], uCamFxy[0], uCamCxy[0], uCamSkew[0], uCamK[0], uCamMaxTh[0], uCamHW[0], uCamVC[0], uCamXY[0], uCamFwd[0], 12.0, egoPos, uv0, c0, t0, b0);
+              float v1 = projectCamKB4(uCamMask.y, uCamT[1], uCamFxy[1], uCamCxy[1], uCamSkew[1], uCamK[1], uCamMaxTh[1], uCamHW[1], uCamVC[1], uCamXY[1], uCamFwd[1], 62.0, egoPos, uv1, c1, t1, b1);
+              float v2 = projectCamKB4(uCamMask.z, uCamT[2], uCamFxy[2], uCamCxy[2], uCamSkew[2], uCamK[2], uCamMaxTh[2], uCamHW[2], uCamVC[2], uCamXY[2], uCamFwd[2], 8.0, egoPos, uv2, c2, t2, b2);
+              float v3 = projectCamKB4(uCamMask.w, uCamT[3], uCamFxy[3], uCamCxy[3], uCamSkew[3], uCamK[3], uCamMaxTh[3], uCamHW[3], uCamVC[3], uCamXY[3], uCamFwd[3], 8.0, egoPos, uv3, c3, t3, b3);
+              float sMax = max(max(c0, c1), max(c2, c3));
+              if (sMax > 0.0) {
+                float w0 = v0 > 0.5 ? exp(20.0 * (c0 - sMax)) * b0 : 0.0;
+                float w1 = v1 > 0.5 ? exp(20.0 * (c1 - sMax)) * b1 : 0.0;
+                float w2 = v2 > 0.5 ? exp(20.0 * (c2 - sMax)) * b2 : 0.0;
+                float w3 = v3 > 0.5 ? exp(20.0 * (c3 - sMax)) * b3 : 0.0;
+                float sw = w0 + w1 + w2 + w3;
+                if (sw > 0.001) {
+                  vec3 col = vec3(0.0);
+                  if (w0 > 0.001) col += texture2D(uCam0, uv0).rgb * uCamGain[0] * w0;
+                  if (w1 > 0.001) col += texture2D(uCam1, uv1).rgb * uCamGain[1] * w1;
+                  if (w2 > 0.001) col += texture2D(uCam2, uv2).rgb * uCamGain[2] * w2;
+                  if (w3 > 0.001) col += texture2D(uCam3, uv3).rgb * uCamGain[3] * w3;
+                  gl_FragColor = vec4(col / sw, 1.0);
+                  return;
+                }
+              }
+            }
+            gl_FragColor = hist;
+          }
+        `,
+      });
+
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), seedMat);
+      orthoScene.add(quad);
+
+      function seedFromImage(img) {
+        if (!img) return;
+        const tex = new THREE.Texture(img);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        seedMat.uniforms.uSeed.value = tex;
+        quad.material = seedMat;
+        const prev = renderer.getRenderTarget();
+        renderer.setRenderTarget(rtSrc);
+        renderer.render(orthoScene, orthoCam);
+        renderer.setRenderTarget(prev);
+        tex.dispose();
+      }
+
+      function stepOdometry(odom, gains, maskVec) {
+        warpMat.uniforms.uPrevGround.value = rtSrc.texture;
+        warpMat.uniforms.uOdom.value.set(odom[0], odom[1], odom[2]);
+        warpMat.uniforms.uCamGain.value = gains;
+        warpMat.uniforms.uCamMask.value.copy(maskVec);
+        quad.material = warpMat;
+        const prev = renderer.getRenderTarget();
+        renderer.setRenderTarget(rtDst);
+        renderer.render(orthoScene, orthoCam);
+        renderer.setRenderTarget(prev);
+        const tmp = rtSrc; rtSrc = rtDst; rtDst = tmp;
+      }
+
+      return { seedFromImage, stepOdometry, getTexture: () => rtSrc.texture, warpMat };
+    }
+
+    // ------------------------------------------------------------------
+    // 4B. Real-Time GPU 2D Cylindrical 180° Dewarper (Zero Latency, Full-Bleed, Zero Distortion!)
+    //     Uses exact KB4 fisheye projection directly from live 1080p textures + ray-ground 3D AR guidelines
+    //     Supports Front 180° (intersection wide view) & Rear 180° FMVSS-111 Mirrored (Left=Left, Right=Right!)
+    // ------------------------------------------------------------------
+    function createWide2DPipeline(camTextures, calibs, groundZ) {
+      const scene = new THREE.Scene();
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          ...makeCamUniforms(camTextures, calibs),
+          uWideCam: { value: 0.0 },    // 0 = Front 180°, 1 = Rear 180°
+          uMirror: { value: 0.0 },     // 0 = Normal (Front), 1 = FMVSS-111 Mirror (Rear: Left=Left)
+          uAspect: { value: 1.35 },
+          uGroundZ: { value: groundZ },
+          uGroundPlane: { value: new THREE.Vector3(0, 0, groundZ) },
+          uSteerRad: { value: 0.0 },
+          uShowGuides: { value: 1.0 },
+        },
+        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+        fragmentShader: `
+          uniform sampler2D uCam0; uniform sampler2D uCam1; uniform sampler2D uCam2; uniform sampler2D uCam3;
+          uniform mat4 uCamT[4]; uniform vec2 uCamFxy[4]; uniform vec2 uCamCxy[4]; uniform float uCamSkew[4]; uniform vec4 uCamK[4];
+          uniform float uCamMaxTh[4]; uniform vec2 uCamHW[4]; uniform vec4 uCamVC[4];
+          uniform vec2 uCamXY[4]; uniform vec2 uCamFwd[4]; uniform vec3 uCamOrigin[4]; uniform vec3 uCamGain[4];
+          uniform vec4 uCamMask;
+          uniform float uWideCam, uMirror, uAspect, uGroundZ, uSteerRad, uShowGuides;
+          uniform vec3 uGroundPlane;
+          varying vec2 vUv;
+
+          bool sampleKB4Wide(
+            float maskBit, mat4 T, vec2 fxy, vec2 cxy, float skew, vec4 kd, float maxTh,
+            vec2 imgHW, vec4 vc, vec3 egoPos, out vec2 uvOut
+          ) {
+            uvOut = vec2(0.0);
+            if (maskBit < 0.5) return false;
+            vec3 xyz = (T * vec4(egoPos, 1.0)).xyz;
+            float rad = length(xyz.xy);
+            float theta = atan(max(rad, 1e-6), xyz.z);
+            if (theta > maxTh) return false;
+            float t2 = theta * theta;
+            float rDist = theta * (1.0 + t2 * (kd.x + t2 * (kd.y + t2 * (kd.z + t2 * kd.w))));
+            vec2 uvPlane = xyz.xy * (rDist / max(rad, 1e-6));
+            vec2 uvPx = vec2(uvPlane.x * fxy.x + uvPlane.y * skew + cxy.x, uvPlane.y * fxy.y + cxy.y);
+            if (vc.z > 0.0 && length(uvPx - vc.xy) > vc.z + 18.0) return false;
+            if (uvPx.x < 0.0 || uvPx.y < 0.0 || uvPx.x >= imgHW.x || uvPx.y >= imgHW.y) return false;
+            uvOut = vec2((uvPx.x + 0.5) / imgHW.x, 1.0 - (uvPx.y + 0.5) / imgHW.y);
+            return true;
+          }
+
+          void main() {
+            bool isRear = uWideCam > 0.5;
+            float uM = mix(vUv.x, 1.0 - vUv.x, uMirror);
+            // True 2D Cylindrical 168-deg horizontal FOV (vertical lines stay 100% straight, zero corner distortion!)
+            float azMax = 1.466; // +-84 deg = 168 deg wide
+            float az = (uM * 2.0 - 1.0) * azMax;
+            // Aspect-matched vertical elevation span: fills 100% viewport height with ZERO black letterbox bars!
+            float elSpan = clamp((2.0 * azMax) / max(uAspect, 0.72) * 0.44, 0.98, 1.32);
+            float elCenter = isRear ? -0.30 : -0.25;
+            float el = elCenter + (vUv.y - 0.5) * elSpan;
+
+            vec3 cOrig = isRear ? uCamOrigin[1] : uCamOrigin[0];
+            vec2 cFwd2 = isRear ? uCamFwd[1] : uCamFwd[0];
+            vec3 fwdH = normalize(vec3(cFwd2.x, cFwd2.y, 0.0));
+            vec3 upH = vec3(0.0, 0.0, 1.0);
+            vec3 rightH = normalize(cross(fwdH, upH));
+            vec3 rayEgo = cos(el) * (cos(az) * fwdH + sin(az) * rightH) + sin(el) * upH;
+            vec3 targetPos = cOrig + rayEgo * 6.0;
+
+            vec2 uv;
+            bool ok = isRear
+              ? sampleKB4Wide(uCamMask.y, uCamT[1], uCamFxy[1], uCamCxy[1], uCamSkew[1], uCamK[1], uCamMaxTh[1], uCamHW[1], uCamVC[1], targetPos, uv)
+              : sampleKB4Wide(uCamMask.x, uCamT[0], uCamFxy[0], uCamCxy[0], uCamSkew[0], uCamK[0], uCamMaxTh[0], uCamHW[0], uCamVC[0], targetPos, uv);
+
+            vec3 col = vec3(0.05, 0.07, 0.07);
+            if (ok) {
+              col = isRear ? texture2D(uCam1, uv).rgb : texture2D(uCam0, uv).rgb;
+            }
+
+            // Crisp ray-plane 3D-projected guidelines onto true road plane z = a*x + b*y + c
+            float denom = rayEgo.z - uGroundPlane.x * rayEgo.x - uGroundPlane.y * rayEgo.y;
+            if (uShowGuides > 0.5 && ok && denom < -0.025) {
+              float tG = (uGroundPlane.z + uGroundPlane.x * cOrig.x + uGroundPlane.y * cOrig.y - cOrig.z) / denom;
+              if (tG > 0.25 && tG < 9.0) {
+                vec2 g = cOrig.xy + rayEgo.xy * tG;
+                float hw = 0.967; // Real VinFast VF 8 half-width (1.934m / 2)
+                if (!isRear) {
+                  float d = g.x - 2.351;
+                  float sDist = max(0.0, g.x + 1.449);
+                  float curveY = 0.5 * (tan(uSteerRad) / 2.950) * sDist * sDist;
+                  float lat = abs(g.y - curveY);
+                  float aaL = max(fwidth(lat), 0.015);
+                  float aaD = max(fwidth(d), 0.015);
+                  if (d >= 0.45 && d <= 4.4) {
+                    float rail = 1.0 - smoothstep(0.022, 0.022 + aaL, abs(lat - hw));
+                    col = mix(col, vec3(0.35, 0.96, 0.68), rail * 0.85);
+                  }
+                  if (lat <= hw + 0.03) {
+                    float bRed = 1.0 - smoothstep(0.024, 0.024 + aaD, abs(d - 0.85));
+                    float bYel = (1.0 - smoothstep(0.018, 0.018 + aaD, abs(d - 1.80))) * step(0.35, fract(lat * 4.5));
+                    float bGrn = (1.0 - smoothstep(0.018, 0.018 + aaD, abs(d - 3.20))) * step(0.35, fract(lat * 4.5));
+                    col = mix(col, vec3(0.96, 0.22, 0.22), bRed * 0.92);
+                    col = mix(col, vec3(0.98, 0.82, 0.16), bYel * 0.85);
+                    col = mix(col, vec3(0.35, 0.96, 0.68), bGrn * 0.78);
+                  }
+                } else {
+                  float d = -2.399 - g.x;
+                  float sDist = max(0.0, -1.449 - g.x);
+                  float curveY = 0.5 * (tan(uSteerRad) / 2.950) * sDist * sDist;
+                  float latStatic = abs(g.y);
+                  float latDyn = abs(g.y - curveY);
+                  float aaL = max(fwidth(latDyn), 0.015);
+                  float aaD = max(fwidth(d), 0.015);
+                  if (d >= 0.45 && d <= 4.2) {
+                    float railStatic = (1.0 - smoothstep(0.016, 0.016 + aaL, abs(latStatic - hw))) * step(0.42, fract(d * 3.5));
+                    float railDyn = 1.0 - smoothstep(0.026, 0.026 + aaL, abs(latDyn - hw));
+                    col = mix(col, vec3(0.95, 0.88, 0.45), railStatic * 0.52);
+                    col = mix(col, vec3(0.99, 0.80, 0.10), railDyn * 0.92);
+                  }
+                  if (latDyn <= hw + 0.03) {
+                    float bRed = 1.0 - smoothstep(0.026, 0.026 + aaD, abs(d - 0.90));
+                    float bOrg = (1.0 - smoothstep(0.020, 0.020 + aaD, abs(d - 1.80))) * step(0.32, fract(latDyn * 4.5));
+                    float bYel = (1.0 - smoothstep(0.018, 0.018 + aaD, abs(d - 3.20))) * step(0.32, fract(latDyn * 4.5));
+                    col = mix(col, vec3(0.96, 0.20, 0.20), bRed * 0.94);
+                    col = mix(col, vec3(0.98, 0.56, 0.14), bOrg * 0.88);
+                    col = mix(col, vec3(0.99, 0.84, 0.14), bYel * 0.82);
+                  }
+                }
+              }
+            }
+            gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+            #include <colorspace_fragment>
+          }
+        `,
+        depthTest: false,
+        depthWrite: false,
+        extensions: { derivatives: true },
+      });
+      scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+      return { scene, camera, mat };
+    }
+
+    // ------------------------------------------------------------------
+    // 5. Surround-view projection with a flat road and a gradual outer wall.
+    // ------------------------------------------------------------------
+    function buildBowlGeometry(buffer) {
+      const u32 = new Uint32Array(buffer, 0, 2);
+      const nVerts = u32[0], nIdx = u32[1];
+      const f32 = new Float32Array(buffer, 8, nVerts * 4);
+      const idx = new Uint32Array(buffer, 8 + nVerts * 4 * 4, nIdx);
+      const pos = new Float32Array(nVerts * 3);
+      const param = new Float32Array(nVerts * 4);
+      for (let i = 0; i < nVerts; i++) {
+        const b = i * 4;
+        const t = f32[b], ang = f32[b + 1], sec = f32[b + 2], gz = f32[b + 3];
+        param[i * 4] = t; param[i * 4 + 1] = ang; param[i * 4 + 2] = sec; param[i * 4 + 3] = gz;
+        const rBase = 1.0 / Math.hypot(Math.cos(ang) / 6.20, Math.sin(ang) / 4.60);
+        pos[i * 3] = -(rBase * Math.sin(ang));
+        pos[i * 3 + 1] = gz;
+        pos[i * 3 + 2] = -(rBase * Math.cos(ang));
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('aBowlParam', new THREE.BufferAttribute(param, 4));
+      geo.setIndex(new THREE.BufferAttribute(idx, 1));
+      return geo;
+    }
+
+    function createAdaptiveBowlShader(camTextures, calibs, groundHistTex) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          ...makeCamUniforms(camTextures, calibs),
+          uLeftPoly: { value: new THREE.Vector3(0.0, 0.0, 4.60) },
+          uRightPoly: { value: new THREE.Vector3(0.0, 0.0, -4.60) },
+          uWallScale: { value: 1.0 },
+          uGroundPlane: { value: new THREE.Vector3(0.0, 0.0, 0.023) },
+          uAdaptStrength: { value: 1.0 },
+          uDynZones: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)) },
+          uGroundHist: { value: groundHistTex },
+          uSmoothSeams: { value: 1.0 },
+          uDepthActive: { value: 0.0 },
+          uSeamActive: { value: 0.0 },
+          uSeamRefine: { value: 1.0 },
+          uSeamPaths: { value: null },
+          uSeamCenters: { value: new THREE.Vector4() },
+          uSeamRings: { value: 20.0 },
+          uSeamMaxOffset: { value: 0.36 },
+          uWallRanges: { value: null },
+          uDepth0: { value: null }, uDepth1: { value: null },
+          uDepth2: { value: null }, uDepth3: { value: null },
+          uXray: { value: 0.0 },
+          uSteerRad: { value: 0.0 },
+          uPdcDist: { value: [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0] },
+          uPdcEnabled: { value: 1.0 },
+          uTopFade: { value: 0.0 },
+          uTime: { value: 0.0 },
+        },
+        vertexShader: `
+          uniform vec3 uLeftPoly;
+          uniform vec3 uRightPoly;
+          uniform float uWallScale;
+          uniform float uDepthActive;
+          uniform vec3 uGroundPlane;
+          uniform float uAdaptStrength;
+          uniform sampler2D uWallRanges;
+          attribute vec4 aBowlParam;
+          varying vec3 vEgoPos;
+          varying float vWallU;
+          varying float vRing;
+          float wallRange(float sector) {
+            float u = (mod(sector, 128.0) + 0.5) / 128.0;
+            vec2 bytes = floor(texture2D(uWallRanges, vec2(u, 0.5)).rg * 255.0 + 0.5);
+            return dot(bytes, vec2(0.01, 2.56));
+          }
+          void main() {
+            float t = aBowlParam.x;
+            float ang = aBowlParam.y;
+            float gz = aBowlParam.w;
+            float ca = cos(ang), sa = sin(ang);
+
+            // Wide OEM 3D Bowl (flat rx=6.20m, ry=4.60m) + safe pull-inward r(theta) ONLY behind tall barriers
+            float ryL = clamp(uLeftPoly.z, 3.80, 5.40);
+            float ryR = clamp(-uRightPoly.z, 3.80, 5.40);
+            float rySide = mix(ryR, ryL, smoothstep(-0.30, 0.30, sa));
+            vec2 flatDirection = vec2(ca / 6.20, sa / rySide);
+            vec2 squared = flatDirection * flatDirection;
+            float rFlatBase = inversesqrt(sqrt(dot(squared, squared)));
+            float rFlat = rFlatBase;
+            float depthWall = 0.0;
+            if (uDepthActive > 0.5 && uWallScale > 0.001) {
+              float sector = ang * (128.0 / 6.2831853) - 0.5;
+              float a = wallRange(floor(sector));
+              float b = wallRange(floor(sector) + 1.0);
+              float va = step(0.01, a), vb = step(0.01, b);
+              float w = fract(sector);
+              float support = mix(va, vb, w);
+              float measured = mix(a, b, w) / max(support, 1e-4);
+              float outsideEgo = 1.0 / max(abs(ca) / 3.40, abs(sa) / 2.10);
+              float sideWeight = 0.35 + 0.65 * smoothstep(0.20, 0.65, abs(sa));
+              depthWall = smoothstep(0.30, 0.90, support) * (1.0 - smoothstep(rFlatBase - 0.15, rFlatBase + 0.85, measured)) * sideWeight * uAdaptStrength;
+              float targetR = clamp(min(rFlatBase, measured + 0.15), outsideEgo, rFlatBase);
+              rFlat = mix(rFlatBase, targetR, depthWall);
+            }
+
+            float flatSplit = 0.56;
+            float r, ez, wallU = 0.0;
+            if (t <= flatSplit) {
+              r = mix(0.05, rFlat, t / flatSplit);
+              ez = dot(uGroundPlane, vec3(r * ca, r * sa, 1.0));
+            } else {
+              wallU = (t - flatSplit) / (1.0 - flatSplit);
+              float rPad = 1.0 / length(vec2(ca / 9.00, sa / 7.50));
+              float rSpan = (rFlatBase + rPad) - rFlat;
+              float rSmooth = rFlat + rSpan * wallU;
+              float zSmooth = 4.60 * pow(wallU, 2.15);
+              float rSteep = rFlat + rSpan * pow(wallU, 1.32);
+              float zSteep = 4.60 * pow(wallU, 1.55);
+              float blendW = depthWall * 0.45;
+              r = mix(rSmooth, rSteep, blendW);
+              float roadZ = dot(uGroundPlane, vec3(r * ca, r * sa, 1.0));
+              ez = roadZ + uWallScale * mix(zSmooth, zSteep, blendW);
+            }
+            vEgoPos = vec3(r * ca, r * sa, ez);
+            vWallU = wallU;
+            vRing = t;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(-vEgoPos.y, vEgoPos.z, -vEgoPos.x, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uCam0; uniform sampler2D uCam1; uniform sampler2D uCam2; uniform sampler2D uCam3;
+          uniform mat4 uCamT[4]; uniform vec2 uCamFxy[4]; uniform vec2 uCamCxy[4]; uniform float uCamSkew[4]; uniform vec4 uCamK[4];
+          uniform float uCamMaxTh[4]; uniform vec2 uCamHW[4]; uniform vec4 uCamVC[4];
+          uniform vec2 uCamXY[4]; uniform vec2 uCamFwd[4]; uniform vec3 uCamGain[4];
+          uniform vec4 uCamMask;
+          uniform vec3 uCamOrigin[4];
+          uniform float uDepthActive;
+          uniform float uSeamActive, uSeamRings, uSeamRefine, uSeamMaxOffset;
+          uniform sampler2D uSeamPaths;
+          uniform vec4 uSeamCenters;
+          uniform sampler2D uDepth0, uDepth1, uDepth2, uDepth3;
+          uniform vec4 uDynZones[8];
+          uniform sampler2D uGroundHist;
+          uniform float uSmoothSeams;
+          uniform float uXray;
+          uniform float uSteerRad;
+          uniform float uPdcDist[8];
+          uniform float uPdcEnabled;
+          uniform float uTopFade;
+          uniform float uTime;
+          varying vec3 vEgoPos;
+          varying float vWallU;
+          varying float vRing;
+
+          ${KB4_GLSL_HELPERS}
+
+          vec4 seamWeights(vec4 score, vec4 valid, float sharpness) {
+            float best = max(max(score.x, score.y), max(score.z, score.w));
+            vec4 weights = exp(sharpness * (score - best)) * valid;
+            return weights / max(dot(weights, vec4(1.0)), 1e-5);
+          }
+
+          vec3 readColor(sampler2D tex, vec2 uv, vec3 gain, float visible) {
+            if (visible < 0.5) return vec3(0.0);
+            return texture2D(tex, uv).rgb * mix(vec3(1.0), gain, uSmoothSeams);
+          }
+
+          // 5-tap Gaussian low-pass filter for real-time 2-band Multi-Band (Laplacian/Gaussian) seam blending
+          vec3 readLowPass(sampler2D tex, vec2 uv, vec2 imgHW, vec3 gain, float visible) {
+            if (visible < 0.5) return vec3(0.0);
+            vec2 d = vec2(6.5) / imgHW;
+            vec3 c = texture2D(tex, uv).rgb * 0.28
+              + (texture2D(tex, uv + vec2( d.x,  d.y)).rgb
+               + texture2D(tex, uv + vec2(-d.x,  d.y)).rgb
+               + texture2D(tex, uv + vec2( d.x, -d.y)).rgb
+               + texture2D(tex, uv + vec2(-d.x, -d.y)).rgb) * 0.18;
+            return c * mix(vec3(1.0), gain, uSmoothSeams);
+          }
+
+          float visibleFromSource(sampler2D ranges, vec2 uv, vec3 origin, float projected) {
+            if (uDepthActive < 0.5 || projected < 0.5 || vWallU < 0.08) return 1.0;
+            vec2 packedRange = floor(texture2D(ranges, vec2(uv.x, 1.0 - uv.y)).rg * 255.0 + 0.5);
+            float hit = dot(packedRange, vec2(0.01, 2.56));
+            if (hit < 0.1) return 1.0;
+            float behind = length(vEgoPos - origin) - hit;
+            float wallWeight = smoothstep(0.08, 0.42, vWallU);
+            return 1.0 - 0.35 * wallWeight * smoothstep(0.35 + 0.05 * hit, 0.95 + 0.08 * hit, behind);
+          }
+
+          vec2 seamValue(float row) {
+            float column = (0.5 + clamp(vRing, 0.0, 1.0) * (uSeamRings - 1.0)) / uSeamRings;
+            return (texture2D(uSeamPaths, vec2(column, row)).rg * 255.0 - 128.0) * vec2(uSeamMaxOffset, 0.24) / 126.0;
+          }
+
+          float angleDistance(float a, float b) {
+            return abs(atan(sin(a - b), cos(a - b)));
+          }
+
+          float seamCorrection(float angle, float center, float target, vec2 axisA, vec2 axisB) {
+            float around = angleDistance(angle, center);
+            vec2 shifted = normalize(vec2(cos(target) / 1.25, sin(target)));
+            return 0.5 * dot(shifted, axisA - axisB) * (1.0 - smoothstep(0.36, 0.77, around));
+          }
+
+          float sdRoundedBox(vec2 p, vec2 b, float r) {
+            vec2 q = abs(p) - b + vec2(r);
+            return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+          }
+
+          float getPdcDist(int s) {
+            if (s == 0) return uPdcDist[0];
+            if (s == 1) return uPdcDist[1];
+            if (s == 2) return uPdcDist[2];
+            if (s == 3) return uPdcDist[3];
+            if (s == 4) return uPdcDist[4];
+            if (s == 5) return uPdcDist[5];
+            if (s == 6) return uPdcDist[6];
+            return uPdcDist[7];
+          }
+
+          void main() {
+            // Camera-anchored corner azimuth (side mirrors sit at x=+0.99m, so shift anchor to +0.35m)
+            // Lets Rear cam cleanly own rear corners instead of stretching grazing mirror-cam pixels!
+            vec2 dirEgo = normalize(vec2((vEgoPos.x - 0.35) / 1.25, vEgoPos.y) + vec2(1e-5, 0.0));
+            float egoAng = atan(vEgoPos.y, vEgoPos.x - 0.35);
+            vec3 surface = cross(dFdx(vEgoPos), dFdy(vEgoPos));
+            surface /= max(length(surface), 1e-6);
+            if (dot(surface, vec3(-dirEgo, 1.0)) < 0.0) surface = -surface;
+            bool useSeam = uSmoothSeams > 0.5 && uSeamActive > 0.5;
+            vec4 targets = uSeamCenters;
+            vec3 samplePoint = vEgoPos;
+            if (useSeam) {
+              vec2 fl = seamValue(0.125), lr = seamValue(0.375);
+              vec2 rr = seamValue(0.625), rf = seamValue(0.875);
+              targets += vec4(fl.x, lr.x, rr.x, rf.x);
+              if (uSeamRefine > 0.5 && uDepthActive < 0.5) {
+                vec4 around = vec4(angleDistance(egoAng, targets.x), angleDistance(egoAng, targets.y),
+                                   angleDistance(egoAng, targets.z), angleDistance(egoAng, targets.w));
+                vec4 blend = 1.0 - smoothstep(vec4(0.08), vec4(0.23), around);
+                samplePoint += surface * dot(blend, vec4(fl.y, lr.y, rr.y, rf.y));
+              }
+            }
+            vec2 uv0, uv1, uv2, uv3;
+            float oc0, oc1, oc2, oc3, t0, t1, t2, t3, b0, b1, b2, b3;
+            // Keep crisp asphalt right up to front bumper & doors (only trim rear red bumper lip 62px!)
+            float v0 = projectCamKB4(uCamMask.x, uCamT[0], uCamFxy[0], uCamCxy[0], uCamSkew[0], uCamK[0], uCamMaxTh[0], uCamHW[0], uCamVC[0], uCamXY[0], uCamFwd[0], 12.0, samplePoint, uv0, oc0, t0, b0);
+            float v1 = projectCamKB4(uCamMask.y, uCamT[1], uCamFxy[1], uCamCxy[1], uCamSkew[1], uCamK[1], uCamMaxTh[1], uCamHW[1], uCamVC[1], uCamXY[1], uCamFwd[1], 62.0, samplePoint, uv1, oc1, t1, b1);
+            float v2 = projectCamKB4(uCamMask.z, uCamT[2], uCamFxy[2], uCamCxy[2], uCamSkew[2], uCamK[2], uCamMaxTh[2], uCamHW[2], uCamVC[2], uCamXY[2], uCamFwd[2], 8.0, samplePoint, uv2, oc2, t2, b2);
+            float v3 = projectCamKB4(uCamMask.w, uCamT[3], uCamFxy[3], uCamCxy[3], uCamSkew[3], uCamK[3], uCamMaxTh[3], uCamHW[3], uCamVC[3], uCamXY[3], uCamFwd[3], 8.0, samplePoint, uv3, oc3, t3, b3);
+
+            vec2 axis0 = normalize(uCamFwd[0]), axis1 = normalize(uCamFwd[1]);
+            vec2 axis2 = normalize(uCamFwd[2]), axis3 = normalize(uCamFwd[3]);
+            float c0 = dot(dirEgo, axis0), c1 = dot(dirEgo, axis1);
+            float c2 = dot(dirEgo, axis2), c3 = dot(dirEgo, axis3);
+            float egoRad = length(vEgoPos.xy);
+            if (useSeam) {
+              float fl = seamCorrection(egoAng, uSeamCenters.x, targets.x, axis0, axis2);
+              float lr = seamCorrection(egoAng, uSeamCenters.y, targets.y, axis2, axis1);
+              float rr = seamCorrection(egoAng, uSeamCenters.z, targets.z, axis1, axis3);
+              float rf = seamCorrection(egoAng, uSeamCenters.w, targets.w, axis3, axis0);
+              c0 += rf - fl;
+              c2 += fl - lr;
+              c1 += lr - rr;
+              c3 += rr - rf;
+            }
+            // Strong object-aware dynamic seam lock alongside DP seam so vehicles/motorbikes at 4 corners stay 100% intact!
+            if (uSmoothSeams > 0.5) {
+              for (int k = 0; k < 8; k++) {
+                vec4 z = uDynZones[k];
+                if (z.y > 0.001 && egoRad < z.w + 1.8) {
+                  float da = abs(atan(sin(egoAng - z.x), cos(egoAng - z.x)));
+                  if (da < z.y) {
+                    float boost = 0.68 * (1.0 - smoothstep(z.y * 0.62, z.y, da))
+                      * (1.0 - smoothstep(z.w + 0.45, z.w + 1.8, egoRad));
+                    int pCam = int(z.z + 0.5);
+                    if (pCam == 0 && v0 > 0.5 && b0 > 0.08) c0 += boost;
+                    else if (pCam == 1 && v1 > 0.5 && b1 > 0.08) c1 += boost;
+                    else if (pCam == 2 && v2 > 0.5 && b2 > 0.08) c2 += boost;
+                    else if (pCam == 3 && v3 > 0.5 && b3 > 0.08) c3 += boost;
+                  }
+                }
+              }
+            }
+
+            vec4 originalConfidence = vec4(b0, b1, b2, b3);
+            vec4 unoccluded = originalConfidence * vec4(
+              visibleFromSource(uDepth0, uv0, uCamOrigin[0], v0),
+              visibleFromSource(uDepth1, uv1, uCamOrigin[1], v1),
+              visibleFromSource(uDepth2, uv2, uCamOrigin[2], v2),
+              visibleFromSource(uDepth3, uv3, uCamOrigin[3], v3)
+            );
+            float bestVisible = max(max(unoccluded.x, unoccluded.y), max(unoccluded.z, unoccluded.w));
+            vec4 confidence = mix(originalConfidence, unoccluded, smoothstep(0.02, 0.28, bestVisible));
+            vec4 valid = vec4(v0, v1, v2, v3) * step(vec4(1e-6), confidence);
+            vec4 cos3D = max(vec4(0.0), vec4(t0, t1, t2, t3));
+            vec4 distC = max(vec4(0.8), vec4(
+              length(vEgoPos - uCamOrigin[0]),
+              length(vEgoPos - uCamOrigin[1]),
+              length(vEgoPos - uCamOrigin[2]),
+              length(vEgoPos - uCamOrigin[3])
+            ));
+            vec4 resQ = min(cos3D / distC, vec4(1.0));
+            vec4 score = vec4(c0, c1, c2, c3) + 0.24 * cos3D + 0.16 * resQ
+              + 0.20 * log(max(confidence, vec4(1e-6)));
+            score = mix(vec4(-10.0), score, valid);
+            float sumL = dot(valid, vec4(1.0));
+            // Linear dark contact-shadow fill under chassis blind spot (sRGB-encodes to matte #242728, zero grey halo!)
+            vec3 col = vec3(0.018, 0.020, 0.022);
+
+            // Sample Temporal Ground Buffer under the real VF 8 chassis (4.750m x 1.934m, center x=-0.024m)
+            vec2 underUv = (vEgoPos.xy + 3.2) / 6.4;
+            bool inHistBounds = (underUv.x > 0.01 && underUv.x < 0.99 && underUv.y > 0.01 && underUv.y < 0.99);
+            float bodySdf = sdRoundedBox(vEgoPos.xy - vec2(-0.024, 0.0), vec2(2.375, 0.967), 0.28);
+
+            if (sumL > 0.0) {
+              vec3 rgb0 = readColor(uCam0, uv0, uCamGain[0], valid.x);
+              vec3 rgb1 = readColor(uCam1, uv1, uCamGain[1], valid.y);
+              vec3 rgb2 = readColor(uCam2, uv2, uCamGain[2], valid.z);
+              vec3 rgb3 = readColor(uCam3, uv3, uCamGain[3], valid.w);
+              float wall = smoothstep(0.02, 0.45, vWallU);
+              vec4 wLow = seamWeights(score, valid, mix(7.5, 12.0, wall));
+              vec4 wHigh = seamWeights(score, valid, mix(46.0, 96.0, wall));
+              float maxLow = max(max(wLow.x, wLow.y), max(wLow.z, wLow.w));
+              if (sumL > 1.0 && uSmoothSeams > 0.5 && maxLow < 0.992) {
+                // Real-time 2-Band Multi-Band (Laplacian/Gaussian Pyramid) Blending:
+                // Low-freq exposure/color blends wide & smoothly; high-freq edges cut crisply along DP seam!
+                vec3 lo0 = readLowPass(uCam0, uv0, uCamHW[0], uCamGain[0], valid.x);
+                vec3 lo1 = readLowPass(uCam1, uv1, uCamHW[1], uCamGain[1], valid.y);
+                vec3 lo2 = readLowPass(uCam2, uv2, uCamHW[2], uCamGain[2], valid.z);
+                vec3 lo3 = readLowPass(uCam3, uv3, uCamHW[3], uCamGain[3], valid.w);
+                vec3 colLow = lo0 * wLow.x + lo1 * wLow.y + lo2 * wLow.z + lo3 * wLow.w;
+
+                vec3 colSoft = rgb0 * wLow.x + rgb1 * wLow.y + rgb2 * wLow.z + rgb3 * wLow.w;
+                vec3 moment = rgb0 * rgb0 * wLow.x + rgb1 * rgb1 * wLow.y
+                  + rgb2 * rgb2 * wLow.z + rgb3 * rgb3 * wLow.w;
+                vec3 lumaW = vec3(0.2126, 0.7152, 0.0722);
+                float sigma = sqrt(dot(max(moment - colSoft * colSoft, vec3(0.0)), lumaW));
+                float disagree = smoothstep(0.04, 0.18, sigma / (0.14 + dot(colSoft, lumaW)));
+                vec4 wSharp = mix(wHigh, seamWeights(score, valid, mix(96.0, 145.0, wall)), disagree);
+                vec3 colHigh = (rgb0 - lo0) * wSharp.x + (rgb1 - lo1) * wSharp.y
+                  + (rgb2 - lo2) * wSharp.z + (rgb3 - lo3) * wSharp.w;
+                col = clamp(colLow + colHigh, 0.0, 1.0);
+              } else {
+                vec4 wSingle = uSmoothSeams > 0.5 ? wHigh : seamWeights(score, valid, 90.0);
+                col = rgb0 * wSingle.x + rgb1 * wSingle.y + rgb2 * wSingle.z + rgb3 * wSingle.w;
+              }
+            }
+
+            if (inHistBounds) {
+              vec4 hist = texture2D(uGroundHist, underUv);
+              // Fill true camera blind spot under chassis smoothly with temporal history
+              float blindMask = 1.0 - smoothstep(-0.12, 0.14, bodySdf);
+              float useHist = max(blindMask, (sumL < 0.002 ? 1.0 : 0.0)) * hist.a;
+              if (uXray > 0.5) useHist = max(useHist, (1.0 - smoothstep(0.0, 0.25, bodySdf)) * hist.a);
+              col = mix(col, hist.rgb, useHist);
+            }
+
+            // Translucent Ackermann steering tire tracks (VF 8 rear axle=-1.449m, wheelbase=2.950m, track=+-0.820m)
+            if (uXray > 0.5 && vWallU < 0.05 && vEgoPos.x > -1.65 && vEgoPos.x < 4.50) {
+              float fwd = max(0.0, vEgoPos.x + 1.449);
+              float curveY = 0.5 * (tan(uSteerRad) / 2.950) * fwd * fwd;
+              float dL = abs(vEgoPos.y - ( 0.820 + curveY));
+              float dR = abs(vEgoPos.y - (-0.820 + curveY));
+              float dTire = min(dL, dR);
+              float aaT = max(fwidth(dTire), 0.015);
+              float trackBand = 1.0 - smoothstep(0.11 - aaT, 0.13 + aaT, dTire);
+              float edgeLine = smoothstep(0.095, 0.115, dTire) * (1.0 - smoothstep(0.115, 0.135, dTire));
+              float fadeX = smoothstep(-1.65, -1.25, vEgoPos.x) * (1.0 - smoothstep(3.2, 4.5, vEgoPos.x));
+              vec3 trackCol = mix(vec3(0.12, 0.72, 0.65), vec3(0.60, 0.98, 0.85), edgeLine);
+              col = mix(col, trackCol, (trackBand * 0.24 + edgeLine * 0.45) * fadeX);
+            }
+
+            // Procedural SDF PDC Sonar Decals (0 extra draw calls, zero Z-fighting, anti-aliased)
+            if (uPdcEnabled > 0.5 && bodySdf > 0.04 && bodySdf < 0.95) {
+              float ang = mod(atan(vEgoPos.y, vEgoPos.x) + 3.14159265 / 8.0, 6.2831853);
+              float secF = ang / (6.2831853 / 8.0);
+              int secI = int(clamp(floor(secF), 0.0, 7.0));
+              float secLocal = abs(fract(secF) - 0.5);
+              float pdcD = getPdcDist(secI);
+              if (pdcD < 3.4) {
+                float gapMask = 1.0 - smoothstep(0.42, 0.45, secLocal);
+                // 3 crisp concentric sonar arcs painted directly onto the bowl surface
+                float aa = max(fwidth(bodySdf), 0.012);
+                float r1 = smoothstep(0.10 - aa, 0.10 + aa, bodySdf) * (1.0 - smoothstep(0.28 - aa, 0.28 + aa, bodySdf));
+                float r2 = smoothstep(0.36 - aa, 0.36 + aa, bodySdf) * (1.0 - smoothstep(0.54 - aa, 0.54 + aa, bodySdf));
+                float r3 = smoothstep(0.62 - aa, 0.62 + aa, bodySdf) * (1.0 - smoothstep(0.80 - aa, 0.80 + aa, bodySdf));
+                vec3 pdcCol;
+                float alpha = 0.0;
+                if (pdcD < 1.2) {
+                  float pulse = pdcD < 0.85 ? (0.68 + 0.32 * sin(uTime * 9.5)) : 1.0;
+                  pdcCol = vec3(0.92, 0.06, 0.06);
+                  alpha = (r1 * 0.78 + r2 * 0.48 + r3 * 0.22) * pulse;
+                } else if (pdcD < 2.2) {
+                  pdcCol = vec3(0.95, 0.48, 0.02);
+                  alpha = (r2 * 0.56 + r3 * 0.28);
+                } else {
+                  pdcCol = vec3(0.05, 0.68, 0.55);
+                  alpha = r3 * 0.36;
+                }
+                col = mix(col, pdcCol, clamp(alpha * gapMask, 0.0, 0.82));
+              }
+            }
+
+            float rimFade = 1.0 - smoothstep(0.84, 1.0, vWallU) * 0.42;
+            // In 2D Top-Down mode, softly feather outer walls beyond ±3.20m into dark slate
+            if (uTopFade > 0.5) {
+              float sideFade = 1.0 - smoothstep(3.20, 4.40, abs(vEgoPos.y)) * 0.65;
+              col = mix(vec3(0.06, 0.08, 0.08), col, sideFade);
+            }
+            gl_FragColor = vec4(clamp(col, 0.0, 1.0) * rimFade, 1.0);
+            #include <colorspace_fragment>
+          }
+        `,
+        fog: false,
+        extensions: { derivatives: true },
+        side: THREE.DoubleSide,
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // 5B. LiDAR range textures for the adaptive bowl and source visibility.
+    function createDepthProjection(cameraCount) {
+      const sectors = 128;
+      const depthTextures = Array(cameraCount).fill(null);
+      const wallTexture = makeRangeTexture(sectors, 1);
+      const smoothWalls = new Float32Array(sectors);
+      let wallPrimed = false;
+      let width = 0, height = 0;
+
+      function makeRangeTexture(w, h) {
+        const texture = new THREE.DataTexture(new Uint8Array(w * h * 4), w, h);
+        texture.minFilter = texture.magFilter = THREE.NearestFilter;
+        return texture;
+      }
+
+      function copyRanges(texture, ranges) {
+        const pixels = texture.image.data;
+        for (let i = 0; i < ranges.length; i++) {
+          pixels[4*i] = ranges[i] & 255;
+          pixels[4*i+1] = ranges[i] >> 8;
+        }
+        texture.needsUpdate = true;
+      }
+
+      function setDepth(buffer, adjacent = false) {
+        if (!buffer || buffer.byteLength < 8) return false;
+        const [w, h] = new Uint32Array(buffer, 0, 2);
+        if (w < 2 || h < 2 || w > 512 || h > 512 || buffer.byteLength !== 8 + 2 * (w * h * cameraCount + sectors)) return false;
+        if (w !== width || h !== height) {
+          width = w;
+          height = h;
+          for (let i = 0; i < cameraCount; i++) {
+            depthTextures[i]?.dispose();
+            depthTextures[i] = makeRangeTexture(w, h);
+          }
+        }
+        let hasSupport = false;
+        for (let i = 0; i < cameraCount; i++) {
+          const ranges = new Uint16Array(buffer, 8 + 2 * w * h * i, w * h);
+          copyRanges(depthTextures[i], ranges);
+          hasSupport ||= ranges.some(cm => cm > 0);
+        }
+        const rawWalls = new Uint16Array(buffer, 8 + 2 * w * h * cameraCount, sectors);
+        const outWalls = new Uint16Array(sectors);
+        // Temporal hysteresis + asymmetric EMA suppresses r(theta) wobbling during playback
+        if (!adjacent || !wallPrimed) {
+          for (let i = 0; i < sectors; i++) smoothWalls[i] = rawWalls[i] * 0.01;
+          wallPrimed = true;
+        } else {
+          for (let i = 0; i < sectors; i++) {
+            const rawM = rawWalls[i] * 0.01;
+            const curM = smoothWalls[i];
+            if (rawM < 0.05) {
+              smoothWalls[i] = curM < 0.05 ? 0.0 : Math.max(0.0, curM - 0.15);
+            } else if (curM < 0.05) {
+              smoothWalls[i] = rawM;
+            } else if (Math.abs(rawM - curM) >= 0.08) {
+              const alpha = rawM < curM ? 0.28 : 0.08;
+              smoothWalls[i] = curM + (rawM - curM) * alpha;
+            }
+          }
+        }
+        for (let i = 0; i < sectors; i++) outWalls[i] = Math.max(0, Math.round(smoothWalls[i] * 100));
+        copyRanges(wallTexture, outWalls);
+        return hasSupport || rawWalls.some(cm => cm > 0);
+      }
+
+      function update(enabled, bowlMat) {
+        const uniforms = bowlMat.uniforms;
+        uniforms.uDepthActive.value = enabled ? 1 : 0;
+        uniforms.uWallRanges.value = wallTexture;
+        for (let i = 0; i < cameraCount; i++) uniforms['uDepth' + i].value = depthTextures[i];
+      }
+
+      return { setDepth, update };
+    }
+
+    // 5C. Profile 2: Native Non-Pinhole Feed-Forward 3D Gaussian Splatting Layer (6DoF)
+    //     - Tangent-Oriented 3D Ellipsoid Splat Shader (Hybrid Surfel + View Billboard)
+    //     - O(N) 256-Bucket Back-to-Front Counting Depth Sort in JS
+    //     - Direct sRGB camera radiance from Double Sphere Ray-LUT unprojection
+    // ------------------------------------------------------------------
+    function create3DGSSplatLayer() {
+      const MAX_SPLATS = 48000;
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+        -1, -1, 0,   1, -1, 0,   1, 1, 0,   -1, 1, 0,
+      ]), 3));
+      geo.setIndex([0, 1, 2, 0, 2, 3]);
+
+      const centers = new Float32Array(MAX_SPLATS * 3);
+      const scales  = new Float32Array(MAX_SPLATS);
+      const normals = new Float32Array(MAX_SPLATS * 3);
+      const colors  = new Float32Array(MAX_SPLATS * 3);
+
+      const aCenter = new THREE.InstancedBufferAttribute(centers, 3);
+      const aScale  = new THREE.InstancedBufferAttribute(scales, 1);
+      const aNormal = new THREE.InstancedBufferAttribute(normals, 3);
+      const aColor  = new THREE.InstancedBufferAttribute(colors, 3);
+      aCenter.setUsage(THREE.DynamicDrawUsage);
+      aScale.setUsage(THREE.DynamicDrawUsage);
+      aNormal.setUsage(THREE.DynamicDrawUsage);
+      aColor.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('aCenter', aCenter);
+      geo.setAttribute('aScale', aScale);
+      geo.setAttribute('aNormal', aNormal);
+      geo.setAttribute('aColor', aColor);
+      geo.instanceCount = 0;
+
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uScaleBoost: { value: 1.55 },
+        },
+        vertexShader: `
+          attribute vec3 aCenter;
+          attribute float aScale;
+          attribute vec3 aNormal;
+          attribute vec3 aColor;
+          uniform float uScaleBoost;
+          varying vec2 vLocal;
+          varying vec3 vColor;
+          void main() {
+            vLocal = position.xy;
+            vColor = aColor;
+
+            vec3 n = normalize(aNormal + vec3(0.0, 1e-4, 0.0));
+            vec3 refUp = abs(n.y) < 0.92 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            vec3 t1 = normalize(cross(refUp, n));
+            vec3 t2 = cross(n, t1);
+
+            vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+            vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+            vec3 viewDir  = normalize(cameraPosition - aCenter);
+            float ndv = abs(dot(n, viewDir));
+
+            // Hybrid 3D ellipsoid: flat surface surfel when facing camera, volumetric billboard when grazing
+            float billBlend = 1.0 - smoothstep(0.18, 0.62, ndv);
+            float s = aScale * uScaleBoost;
+            vec3 surfOff = (t1 * position.x + t2 * position.y) * s;
+            vec3 billOff = (camRight * position.x + camUp * position.y) * (s * 0.85);
+            vec3 worldPos = aCenter + mix(surfOff, billOff, billBlend);
+            gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec2 vLocal;
+          varying vec3 vColor;
+          void main() {
+            float r2 = dot(vLocal, vLocal);
+            if (r2 > 1.0) discard;
+            float g = exp(-2.7 * r2);
+            gl_FragColor = vec4(vColor, clamp(g * 0.96, 0.0, 1.0));
+          }
+        `,
+        transparent: true,
+        depthTest: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+
+      // Raw unpacked source arrays + 256-bucket back-to-front counting sort buffers
+      let count = 0;
+      let rawData = null;
+      const depthKeys = new Uint8Array(MAX_SPLATS);
+      const buckets = new Int32Array(256);
+      const offsets = new Int32Array(256);
+      const lastCamPos = new THREE.Vector3(1e9, 1e9, 1e9);
+      const lastCamDir = new THREE.Vector3(0, 0, 0);
+      const tmpDir = new THREE.Vector3();
+
+      function sortByCamera(camera, force = false) {
+        if (!count || !rawData) return;
+        camera.getWorldDirection(tmpDir);
+        if (!force && lastCamPos.distanceToSquared(camera.position) < 0.09 && lastCamDir.dot(tmpDir) > 0.996) {
+          return;
+        }
+        lastCamPos.copy(camera.position);
+        lastCamDir.copy(tmpDir);
+
+        const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+        const dx = tmpDir.x, dy = tmpDir.y, dz = tmpDir.z;
+        let dMin = 1e9, dMax = -1e9;
+        // Fast pass 1: find projected depth range along camera forward axis
+        for (let i = 0; i < count; i++) {
+          const b = i * 10;
+          const d = (rawData[b] - cx) * dx + (rawData[b + 1] - cy) * dy + (rawData[b + 2] - cz) * dz;
+          if (d < dMin) dMin = d;
+          if (d > dMax) dMax = d;
+        }
+        const invSpan = 255.0 / Math.max(dMax - dMin, 1e-3);
+        buckets.fill(0);
+        // Pass 2: quantize back-to-front (farther -> smaller bucket index -> drawn FIRST)
+        for (let i = 0; i < count; i++) {
+          const b = i * 10;
+          const d = (rawData[b] - cx) * dx + (rawData[b + 1] - cy) * dy + (rawData[b + 2] - cz) * dz;
+          const key = 255 - Math.max(0, Math.min(255, ((d - dMin) * invSpan) | 0));
+          depthKeys[i] = key;
+          buckets[key]++;
+        }
+        let acc = 0;
+        for (let k = 0; k < 256; k++) { offsets[k] = acc; acc += buckets[k]; }
+        // Pass 3: scatter directly into InstancedBufferAttributes
+        for (let i = 0; i < count; i++) {
+          const dst = offsets[depthKeys[i]]++;
+          const sb = i * 10;
+          const d3 = dst * 3;
+          centers[d3]     = rawData[sb];
+          centers[d3 + 1] = rawData[sb + 1];
+          centers[d3 + 2] = rawData[sb + 2];
+          scales[dst]     = rawData[sb + 3];
+          normals[d3]     = rawData[sb + 4];
+          normals[d3 + 1] = rawData[sb + 5];
+          normals[d3 + 2] = rawData[sb + 6];
+          colors[d3]      = rawData[sb + 7];
+          colors[d3 + 1]  = rawData[sb + 8];
+          colors[d3 + 2]  = rawData[sb + 9];
+        }
+        geo.instanceCount = count;
+        aCenter.needsUpdate = true;
+        aScale.needsUpdate = true;
+        aNormal.needsUpdate = true;
+        aColor.needsUpdate = true;
+      }
+
+      function setBinary(buf, camera) {
+        if (!buf || buf.byteLength < 4) {
+          count = 0; rawData = null; geo.instanceCount = 0;
+          return 0;
+        }
+        const n = Math.min(MAX_SPLATS, new Uint32Array(buf, 0, 1)[0]);
+        if (n === 0 || buf.byteLength < 4 + n * 40) {
+          count = 0; rawData = null; geo.instanceCount = 0;
+          return 0;
+        }
+        count = n;
+        rawData = new Float32Array(buf, 4, n * 10);
+        sortByCamera(camera, true);
+        return count;
+      }
+
+      return { mesh, setBinary, sortByCamera, getCount: () => count };
+    }
+
+    // ------------------------------------------------------------------
+    // 6. Dark Vector Radar Ground (only visible in Sa bàn Radar mode)
+    // ------------------------------------------------------------------
+    function buildVectorMapStage() {
+      const vecGroup = new THREE.Group();
+      const floor = new THREE.Mesh(new THREE.CircleGeometry(14.0, 64), new THREE.MeshBasicMaterial({ color: 0x070d12 }));
+      floor.rotation.x = -Math.PI / 2; floor.position.y = -0.025;
+      vecGroup.add(floor);
+      for (const rad of [2.8, 5.2, 7.6]) {
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(rad - 0.02, rad + 0.02, 72),
+          new THREE.MeshBasicMaterial({ color: rad === 5.2 ? 0x2dd4bf : 0x1a3842, transparent: true, opacity: rad === 5.2 ? 0.50 : 0.36, side: THREE.DoubleSide })
+        );
+        ring.rotation.x = -Math.PI / 2; ring.position.y = 0.006;
+        vecGroup.add(ring);
+      }
+      const laneMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.72 });
+      const dashMat = new THREE.LineBasicMaterial({ color: 0x90f3be, transparent: true, opacity: 0.85 });
+      for (const yOff of [-1.20, 1.20]) {
+        vecGroup.add(
+          new THREE.Line(new THREE.BufferGeometry().setFromPoints([ego2w(2.6, yOff, 0.015), ego2w(8.0, yOff, 0.015)]), laneMat),
+          new THREE.Line(new THREE.BufferGeometry().setFromPoints([ego2w(-2.6, yOff, 0.015), ego2w(-7.5, yOff, 0.015)]), laneMat)
+        );
+      }
+      for (const xChev of [3.5, 4.9, 6.3, 7.5]) {
+        vecGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+          ego2w(xChev - 0.38, -0.55, 0.018), ego2w(xChev, 0.0, 0.018), ego2w(xChev - 0.38, 0.55, 0.018),
+        ]), dashMat));
+      }
+      return vecGroup;
+    }
+
+    function buildStudioEnv(renderer) {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const envScene = new THREE.Scene();
+      envScene.background = new THREE.Color(0x162228);
+      const mkBox = (col, sx, sy, sz, px, py, pz) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial({ color: col }));
+        m.position.set(px, py, pz);
+        envScene.add(m);
+        return m;
+      };
+      const items = [
+        mkBox(0xffffff, 10, 0.3, 14, 0, 8.5, 0),       // overhead softbox
+        mkBox(0xfff4e0, 12, 3.0, 0.4, 0, 3.5, -10),    // warm front bounce
+        mkBox(0x90f3be, 0.4, 2.5, 14, -9, 2.5, 0),     // cool mint left strip
+        mkBox(0xd8ecff, 0.4, 2.5, 14,  9, 2.5, 0),     // cool sky right strip
+        mkBox(0x182224, 24, 0.4, 24, 0, -4, 0),        // dark studio floor
+      ];
+      const tex = pmrem.fromScene(envScene, 0.04).texture;
+      for (const m of items) { m.geometry.dispose(); m.material.dispose(); }
+      pmrem.dispose();
+      return tex;
+    }
+
+    function create3DStage(canvas, labelRoot, bowlGeo, camTextures, calibs, meta, arPoolFactory) {
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.04;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x060b0f);
+      scene.fog = new THREE.FogExp2(0x060b0f, 0.020);
+      scene.environment = buildStudioEnv(renderer);
+
+      const perspectiveCamera = new THREE.PerspectiveCamera(38, 1, 0.1, 80);
+      perspectiveCamera.position.fromArray(VIEW_PRESETS.hero.pos);
+      const tileCamera = new THREE.PerspectiveCamera(38, 1, 0.1, 80);
+      const topCamera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 80);
+      topCamera.position.set(0, 14, 0);
+      topCamera.up.set(0, 0, -1);
+      topCamera.lookAt(0, 0, 0);
+
+      const controls = new OrbitControls(perspectiveCamera, canvas);
+      controls.enableDamping = true; controls.dampingFactor = 0.08;
+      controls.maxPolarAngle = Math.PI * 0.48;
+      controls.minDistance = 3.2; controls.maxDistance = 24.0;
+      controls.target.fromArray(VIEW_PRESETS.hero.target);
+
+      scene.add(new THREE.HemisphereLight(0xeef6ff, 0x162226, 1.35));
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.75); keyLight.position.set(6, 13, -5); scene.add(keyLight);
+      const fillLight = new THREE.DirectionalLight(0x5eead4, 0.60); fillLight.position.set(-7, 5, 6); scene.add(fillLight);
+
+      const groundZ = meta.surround.ground_z ?? 0.025;
+      const temporalGround = createTemporalGroundPipeline(renderer, camTextures, calibs, groundZ);
+      const wide2D = createWide2DPipeline(camTextures, calibs, groundZ);
+      const bowlMat = createAdaptiveBowlShader(camTextures, calibs, temporalGround.getTexture());
+      const bowl = new THREE.Mesh(bowlGeo, bowlMat);
+      bowl.frustumCulled = false;
+      scene.add(bowl);
+
+      const splatLayer = create3DGSSplatLayer();
+      scene.add(splatLayer.mesh);
+
+      const vectorMap = buildVectorMapStage();
+      scene.add(vectorMap);
+
+      const vSpec = meta.surround.vehicle_spec;
+      const suv = buildSuvMesh(vSpec);
+      scene.add(suv.group);
+
+      // Steering-aligned front & rear floor guidelines matching real VF 8 width (±0.967m) & bumpers ([-2.399, +2.351]m)
+      const gW = (vSpec?.width_m || 1.934) * 0.5;
+      const gF = (vSpec?.x_front_bumper_m ?? 2.351) + 0.12;
+      const gR = (vSpec?.x_rear_bumper_m ?? -2.399) - 0.12;
+      const guideGroup = new THREE.Group();
+      guideGroup.position.y = groundZ + 0.02;
+      const lineMatY = new THREE.LineBasicMaterial({ color: 0xf0df48, transparent: true, opacity: 0.85 });
+      const lineMatR = new THREE.LineBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.82 });
+      const addLine = (pts, mat = lineMatY) => guideGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x, y, z]) => ego2w(x, y, z))), mat));
+      addLine([[gF, -gW, 0.015], [gF + 3.25, -gW, 0.015]]);
+      addLine([[gF,  gW, 0.015], [gF + 3.25,  gW, 0.015]]);
+      addLine([[gF + 1.25, -gW, 0.015], [gF + 1.25,  gW, 0.015]]);
+      addLine([[gR, -gW, 0.015], [gR - 2.85, -gW, 0.015]]);
+      addLine([[gR,  gW, 0.015], [gR - 2.85,  gW, 0.015]]);
+      addLine([[gR - 0.60, -gW, 0.015], [gR - 0.60,  gW, 0.015]], lineMatR);
+      scene.add(guideGroup);
+
+      const smoothMat = createFresnelShieldMaterial();
+      const smoothMesh = new THREE.Mesh(new THREE.BufferGeometry(), smoothMat);
+      smoothMesh.visible = false; smoothMesh.frustumCulled = false;
+      scene.add(smoothMesh);
+
+      const arGroup = new THREE.Group();
+      scene.add(arGroup);
+      const arPool = arPoolFactory.makeStagePool(arGroup);
+
+      const roadEdgeGroup = new THREE.Group();
+      scene.add(roadEdgeGroup);
+
+      const [zN, yN, xN] = meta.grid.shape;
+      const voxMesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.1, transparent: true, opacity: 0.72 }),
+        zN * yN * xN
+      );
+      voxMesh.count = 0; voxMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      scene.add(voxMesh);
+
+      const resize = () => {
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        if (w < 1 || h < 1) return;
+        renderer.setSize(w, h, false);
+        const split = stageObj.splitRatio || 0;
+        const wDetail = Math.max(1, Math.round(w * (1 - split)));
+        perspectiveCamera.aspect = wDetail / h;
+        perspectiveCamera.updateProjectionMatrix();
+        if (split > 0.01) {
+          // OEM Tight 2D Top-Down 360° Minimap: ±2.80m laterally (crisp road + curbs + nearby motorbikes, zero smeared walls!)
+          const wTop = Math.max(1, Math.round(w * split));
+          const topAspect = wTop / h;
+          const halfWidth = 2.80;
+          const halfHeight = Math.max(4.60, halfWidth / Math.max(topAspect, 0.25));
+          topCamera.left = -halfWidth;
+          topCamera.right = halfWidth;
+          topCamera.top = halfHeight;
+          topCamera.bottom = -halfHeight;
+        } else {
+          // Tight portrait-balanced Top-Down 360°
+          const aspect = w / Math.max(h, 1);
+          const halfHeight = 4.65;
+          const halfWidth = Math.max(3.10, halfHeight * aspect);
+          topCamera.left = -halfWidth;
+          topCamera.right = halfWidth;
+          topCamera.top = halfHeight;
+          topCamera.bottom = -halfHeight;
+        }
+        topCamera.updateProjectionMatrix();
+      };
+      const stageObj = {
+        canvas, labelRoot, renderer, scene, camera: perspectiveCamera, perspectiveCamera, tileCamera, topCamera, controls,
+        bowl, bowlMat, splatLayer, temporalGround, wide2D, vectorMap, suv, guideGroup,
+        smoothMesh, smoothMat, arPool, roadEdgeGroup, voxMesh,
+        curLeftPoly: new THREE.Vector3(0, 0, 4.60),
+        targetLeftPoly: new THREE.Vector3(0, 0, 4.60),
+        curRightPoly: new THREE.Vector3(0, 0, -4.60),
+        targetRightPoly: new THREE.Vector3(0, 0, -4.60),
+        curWallScale: 1.0,
+        targetWallScale: 1.0,
+        curAdaptStrength: 1.0,
+        targetAdaptStrength: 1.0,
+        curDynZones: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)),
+        targetDynZones: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)),
+        splitRatio: 0.0,
+        arObjects: [], showLabels: true,
+        resize,
+      };
+      new ResizeObserver(resize).observe(canvas);
+      return stageObj;
+    }
+
+    function updateCamUniforms(uniforms, calibs) {
+      uniforms.uCamT.value = calibs.map(c => new THREE.Matrix4().set(...c.t_cam_from_ego));
+      uniforms.uCamFxy.value = calibs.map(c => new THREE.Vector2(...c.fxy));
+      uniforms.uCamCxy.value = calibs.map(c => new THREE.Vector2(...c.cxy));
+      uniforms.uCamSkew.value = calibs.map(c => c.skew || 0.0);
+      uniforms.uCamK.value = calibs.map(c => new THREE.Vector4(...c.k));
+      uniforms.uCamMaxTh.value = calibs.map(c => c.max_theta_rad);
+      uniforms.uCamHW.value = calibs.map(c => new THREE.Vector2(c.hw[1], c.hw[0]));
+      uniforms.uCamVC.value = calibs.map(c => new THREE.Vector4(c.valid_circle[0], c.valid_circle[1], c.valid_circle[2], 0.0));
+      uniforms.uCamXY.value = calibs.map(c => new THREE.Vector2(...c.cam_xy));
+      uniforms.uCamFwd.value = calibs.map(c => new THREE.Vector2(...c.cam_fwd));
+      if (uniforms.uCamOrigin) uniforms.uCamOrigin.value = calibs.map(c => new THREE.Vector3(...c.cam_origin));
+    }
+
+    (async function () {
+      const [meta, bowlBuf] = await Promise.all([
+        fetch('/api/meta').then(r => r.json()),
+        fetch('/api/bowl.bin').then(r => r.arrayBuffer()),
+      ]);
+      const clips = (meta.clips && meta.clips.length) ? meta.clips : [{
+        drive_id: meta.source, split: meta.split, start_index: 0, count: meta.frames.length, surround: meta.surround,
+      }];
+      let activeClip = clips[0];
+      let activeSurround = activeClip.surround;
+      let calibs = activeSurround.camera_calib;
+      $('thSlider').value = meta.default_threshold;
+      $('uSlider').value = meta.default_max_uncertainty;
+      $('thVal').textContent = meta.default_threshold.toFixed(2);
+      $('uVal').textContent = meta.default_max_uncertainty.toFixed(2);
+
+      const camTextures = Array.from({ length: 4 }, () => {
+        const t = new THREE.Texture();
+        t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter;
+        t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace;
+        return t;
+      });
+
+      const bowlGeo = buildBowlGeometry(bowlBuf);
+      const defaultLeft = [0.0, 0.0, 4.60], defaultRight = [0.0, 0.0, -4.60];
+
+      const arFactory = createArObjectPool();
+      const mainStage = create3DStage($('glMain'), $('labelsMain'), bowlGeo, camTextures, calibs, meta, arFactory);
+      const gtStage = create3DStage($('glGt'), $('labelsGt'), bowlGeo, camTextures, calibs, meta, arFactory);
+      const foreground = createDepthProjection(calibs.length);
+      let bowlSeams = createBowlSeams(activeSurround.bowl_seams);
+      const hasLidarDepth = meta.frames.some(row => row.lidar_present);
+      let depthEnabled = hasLidarDepth, foregroundFrame = -1;
+      $('btnForeground').disabled = !hasLidarDepth;
+      $('btnForeground').setAttribute('aria-pressed', String(depthEnabled));
+
+      mainStage.controls.addEventListener('change', () => {
+        if (rightMode === 'gt3d') {
+          gtStage.perspectiveCamera.position.copy(mainStage.perspectiveCamera.position);
+          gtStage.controls.target.copy(mainStage.controls.target);
+        }
+      });
+
+      const camNames = ['Trước (Front)', 'Sau (Rear)', 'Trái (Left)', 'Phải (Right)'];
+      const camMask = [true, true, true, true];
+      const miniImgs = [], miniCards = [];
+      let sceneMode = 'ar';
+      let showArBoxes = true, showPdc = true, showStaticShield = false, showVoxels = false;
+      let xrayChassis = false, adaptBowl = false, shaderBlend = true, seamRefine = true;
+      let rightMode = 'cam-0', activeCam = 0, current = 0, displayedIndex = -1;
+      let playing = false, timer = 0, frameBusy = false, queuedFrame = null;
+      let showGuidelines = true, useRect = true;
+      let lastData = null, lastDataKey = '', lastRightImg = null, rightRequest = 0, rightLoading = true;
+      let inferenceBusy = false, queuedInference = null;
+      let groundReady = false, groundBusy = false, groundRevision = 0;
+      let cameraImages = [], cameraAvailable = [false, false, false, false];
+      const stages = [mainStage, gtStage];
+      const cameraGains = Array.from({ length: 4 }, () => new THREE.Vector3(1, 1, 1));
+      let sampleCameraColors = makeOverlapColorSampler(activeSurround.overlap_uv);
+      const gainTarget = new THREE.Vector3();
+      function updateCameraColors(blend) {
+        if (cameraImages.length === 0) return;
+        const { pixels, gains } = sampleCameraColors(cameraImages, camMask);
+        gains.forEach((rgb, i) => cameraGains[i].lerp(gainTarget.fromArray(rgb), blend));
+        bowlSeams.sample(pixels, cameraGains, blend < 1);
+      }
+      const layerRequests = new Set();
+      let meshPredKey = '', meshPredBuf = null, meshGtKey = '', meshGtBuf = null;
+      let splatPredKey = '', splatPredBuf = null, splatGtKey = '', splatGtBuf = null;
+
+      for (let i = 0; i < 4; i++) {
+        const card = document.createElement('div');
+        card.className = 'cam-mini' + (i === 0 ? ' selected' : '');
+        card.innerHTML = `<div class="cam-mini-head"><b>${camNames[i]}</b><span class="st" style="color:var(--mint)">Bật</span></div>
+          <img alt="${camNames[i]}">
+          <div class="cam-mini-foot"><span>Bấm để chọn góc</span><button type="button">Tắt cam</button></div>`;
+        card.querySelector('img').onclick = () => selectRightMode(`cam-${i}`);
+        const btn = card.querySelector('button');
+        btn.onclick = () => {
+          camMask[i] = !camMask[i];
+          card.classList.toggle('off', !camMask[i]);
+          card.querySelector('.st').textContent = camMask[i] ? 'Bật' : 'Mất tín hiệu';
+          card.querySelector('.st').style.color = camMask[i] ? 'var(--mint)' : 'var(--fault)';
+          btn.textContent = camMask[i] ? 'Tắt cam' : 'Bật lại';
+          updateCameraMask();
+          groundReady = false;
+          groundRevision++;
+          updateCameraColors(1);
+          void refreshRightImage();
+          queueInference();
+          seedGround();
+        };
+        $('camsStrip').append(card);
+        miniImgs.push(card.querySelector('img'));
+        miniCards.push(card);
+      }
+
+      const CLIP_LABELS = {
+        'COMPLEX CITY': 'Video Chuẩn: Đại lộ Phố rộng (COMPLEX CITY)',
+        'COMPLEX URBAN': 'Video 2: Cầu vượt Hẹp (COMPLEX URBAN)',
+      };
+
+      function applyClip(clip, initialLocalOffset = null) {
+        pause(false);
+        activeClip = clip;
+        activeSurround = clip.surround;
+        calibs = activeSurround.camera_calib;
+        const gz = activeSurround.ground_z ?? 0.025;
+        const gp = activeSurround.ground_plane || [0.0, 0.0, gz];
+        for (const st of stages) {
+          updateCamUniforms(st.bowlMat.uniforms, calibs);
+          updateCamUniforms(st.temporalGround.warpMat.uniforms, calibs);
+          updateCamUniforms(st.wide2D.mat.uniforms, calibs);
+          st.temporalGround.warpMat.uniforms.uGroundZ.value = gz;
+          st.wide2D.mat.uniforms.uGroundZ.value = gz;
+          st.bowlMat.uniforms.uGroundPlane.value.set(...gp);
+          st.temporalGround.warpMat.uniforms.uGroundPlane.value.set(...gp);
+          st.wide2D.mat.uniforms.uGroundPlane.value.set(...gp);
+          st.guideGroup.position.y = gz + 0.02;
+        }
+        const bowlParams = bowlGeo.getAttribute('aBowlParam');
+        for (let i = 0; i < bowlParams.count; i++) bowlParams.setW(i, gz);
+        bowlParams.needsUpdate = true;
+        bowlSeams = createBowlSeams(activeSurround.bowl_seams);
+        sampleCameraColors = makeOverlapColorSampler(activeSurround.overlap_uv);
+        displayedIndex = -1;
+        void refreshRightImage();
+        foregroundFrame = -1;
+        groundReady = false;
+        groundRevision++;
+
+        const maxBaDeg = Math.max(0, ...(activeSurround.extrinsic_refine_deg || [0]));
+        const maxDzCm = Math.max(0, ...(activeSurround.calib_dz_cm || [0]).map(Math.abs));
+        const vSpec = activeSurround.vehicle_spec || {};
+        const ch = vSpec.camera_heights_m || {};
+        const chTip = ch.front ? ` | Cam H(m): F=${ch.front} R=${ch.rear} L=${ch.left} R=${ch.right}` : '';
+        $('metaSource').textContent = `${clip.drive_id} · ${clip.count} frame`;
+        $('metaDevice').textContent = (maxBaDeg > 0.01 || maxDzCm > 0.1)
+          ? `${meta.device} · KB4 + 6DoF-BA (Δ${maxBaDeg.toFixed(1)}°, Δz ${maxDzCm.toFixed(1)}cm)`
+          : `${meta.device} · KB4 3D · Road-Plane`;
+        $('metaDevice').title = `${vSpec.model || 'Ego'} (${vSpec.length_m || 4.75}×${vSpec.width_m || 1.93}×${vSpec.height_m || 1.67}m)${chTip}`;
+        $('timeline').min = clip.start_index;
+        $('timeline').max = clip.start_index + clip.count - 1;
+
+        // Rebuild highlight buttons for this specific video clip!
+        $('highlights').innerHTML = '';
+        const subFrames = meta.frames.slice(clip.start_index, clip.start_index + clip.count);
+        const bestVeh = [...subFrames].sort((a, b) => b.vehicle - a.vehicle)[0];
+        const bestRider = [...subFrames].sort((a, b) => b.rider - a.rider)[0];
+        const bestPed = [...subFrames].sort((a, b) => b.pedestrian - a.pedestrian)[0];
+        for (const [label, row] of [['Nhiều Vehicle', bestVeh], ['Nhiều Rider', bestRider], ['Có Pedestrian', bestPed]]) {
+          if (!row) continue;
+          const b = document.createElement('button');
+          const localNum = row.index - clip.start_index + 1;
+          b.textContent = `${label} (#${localNum})`;
+          b.onclick = () => { pause(false); loadFrame(row.index); };
+          $('highlights').append(b);
+        }
+
+        document.querySelectorAll('#clipTabs button').forEach(b => {
+          b.setAttribute('aria-pressed', String(b.dataset.drive === clip.drive_id));
+        });
+
+        const defaultOffset = initialLocalOffset !== null ? initialLocalOffset : Math.min(30, clip.count - 1);
+        loadFrame(clip.start_index + defaultOffset);
+      }
+
+      if (clips.length > 1) {
+        $('clipTabs').hidden = false;
+        for (const clip of clips) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.dataset.drive = clip.drive_id;
+          b.textContent = CLIP_LABELS[clip.drive_id] || `${clip.drive_id} (${clip.count}f)`;
+          b.onclick = () => applyClip(clip, clip.drive_id === 'COMPLEX CITY' ? 30 : 19);
+          $('clipTabs').append(b);
+        }
+      }
+
+      let splitScreen = false, autoView = true;
+      let turnSignal = null, gearReverse = false;
+      let activePreset = 'hero';
+      let camAnim = null;
+      const MULTI_ORDER = ['front', 'rear', 'left', 'right'];
+      const MULTI_META = {
+        front: { label: 'Trước 180°', type: 'wide2d', isRear: false },
+        rear:  { label: 'Sau 180° Gương', type: 'wide2d', isRear: true },
+        left:  { label: 'Hông Trái · Soi bánh', type: '3d', preset: 'left' },
+        right: { label: 'Hông Phải · Soi bánh', type: '3d', preset: 'right' },
+      };
+      let multiViews = ['front'];
+      const isWidePreset = () => activePreset === 'top' && (sceneMode === 'ar' || sceneMode === 'clean');
+
+      function computeMultiCamTiles(x0, w, h, views) {
+        const list = MULTI_ORDER.filter(v => views.includes(v));
+        const active = list.length ? list : ['front'];
+        const tile = (view, cx, cssTop, cw, ch) => ({
+          view, cx, cssTop, cw, ch, rx: x0 + cx, ry: h - (cssTop + ch),
+        });
+        if (active.length === 1) {
+          return { tiles: [tile(active[0], 0, 0, w, h)], divs: [], modeLabel: '1 Góc · Toàn khung' };
+        }
+        if (active.length === 2) {
+          if (active.includes('left') && active.includes('right')) {
+            const w1 = Math.floor(w * 0.5), w2 = Math.max(1, w - w1);
+            return {
+              tiles: [tile('left', 0, 0, w1, h), tile('right', w1, 0, w2, h)],
+              divs: [{ x: x0 + w1 - 1, y: 0, w: 2, h }],
+              modeLabel: '2 Góc · Trái | Phải',
+            };
+          }
+          const h1 = Math.floor(h * 0.5), h2 = Math.max(1, h - h1);
+          return {
+            tiles: [tile(active[0], 0, 0, w, h1), tile(active[1], 0, h1, w, h2)],
+            divs: [{ x: x0, y: h1 - 1, w, h: 2 }],
+            modeLabel: '2 Góc · Trên / Dưới',
+          };
+        }
+        if (active.length === 3) {
+          const hero = active.includes('front') ? 'front' : 'rear';
+          const bot = active.filter(v => v !== hero);
+          // Place Left to the left and Right to the right in the bottom pair
+          bot.sort((a, b) => ({ left: 0, front: 1, rear: 2, right: 3 }[a] - { left: 0, front: 1, rear: 2, right: 3 }[b]));
+          const h1 = Math.round(h * 0.52), h2 = Math.max(1, h - h1);
+          const w1 = Math.floor(w * 0.5), w2 = Math.max(1, w - w1);
+          return {
+            tiles: [tile(hero, 0, 0, w, h1), tile(bot[0], 0, h1, w1, h2), tile(bot[1], w1, h1, w2, h2)],
+            divs: [{ x: x0, y: h1 - 1, w, h: 2 }, { x: x0 + w1 - 1, y: h1, w: 2, h: h2 }],
+            modeLabel: '3 Góc · 1 Trên + 2 Dưới',
+          };
+        }
+        const h1 = Math.floor(h * 0.5), h2 = Math.max(1, h - h1);
+        const w1 = Math.floor(w * 0.5), w2 = Math.max(1, w - w1);
+        return {
+          tiles: [
+            tile('front', 0, 0, w1, h1),
+            tile('rear', w1, 0, w2, h1),
+            tile('left', 0, h1, w1, h2),
+            tile('right', w1, h1, w2, h2),
+          ],
+          divs: [{ x: x0, y: h1 - 1, w, h: 2 }, { x: x0 + w1 - 1, y: 0, w: 2, h }],
+          modeLabel: '4 Góc · Lưới 2×2',
+        };
+      }
+
+      function syncMultiCamUI() {
+        const showBar = isWidePreset();
+        $('multiCamBar').hidden = !showBar;
+        $('multiOverlays').hidden = !showBar || multiViews.length <= 1;
+        if (!showBar) return;
+        document.querySelectorAll('#multiCamBar button[data-mview]').forEach(b => {
+          b.setAttribute('aria-pressed', String(multiViews.includes(b.dataset.mview)));
+        });
+        $('btnMultiAll').setAttribute('aria-pressed', String(multiViews.length === 4));
+        const w = mainStage.canvas.clientWidth, h = mainStage.canvas.clientHeight;
+        const x0 = Math.round(w * (mainStage.splitRatio || 0));
+        const wd = Math.max(1, w - x0);
+        const layout = computeMultiCamTiles(x0, wd, Math.max(1, h), multiViews);
+        $('multiLayoutBadge').textContent = layout.modeLabel;
+        const names = MULTI_ORDER.filter(v => multiViews.includes(v)).map(v => MULTI_META[v].label.split(' ·')[0]);
+        $('leftTitle').textContent = multiViews.length === 1
+          ? `360° + ${MULTI_META[multiViews[0]].label}`
+          : `360° + ${multiViews.length} Góc (${names.join(' · ')})`;
+
+        const ov = $('multiOverlays');
+        ov.innerHTML = '';
+        if (multiViews.length > 1) {
+          for (const d of layout.divs) {
+            const el = document.createElement('div');
+            el.className = 'multi-divider';
+            el.style.left = `${d.x}px`; el.style.top = `${d.y}px`;
+            el.style.width = `${d.w}px`; el.style.height = `${d.h}px`;
+            ov.append(el);
+          }
+          for (const t of layout.tiles) {
+            const tag = document.createElement('div');
+            tag.className = 'multi-tile-tag';
+            tag.textContent = MULTI_META[t.view].label;
+            tag.style.left = `${t.rx + 8}px`;
+            tag.style.top = `${t.cssTop === 0 ? 74 : t.cssTop + 8}px`;
+            ov.append(tag);
+          }
+        }
+      }
+
+      function toggleMultiView(viewName) {
+        if (multiViews.includes(viewName)) {
+          if (multiViews.length <= 1) return; // Always keep at least 1 camera active
+          multiViews = multiViews.filter(v => v !== viewName);
+        } else {
+          multiViews = [...multiViews, viewName];
+        }
+        syncMultiCamUI();
+        refresh3DLayers(false);
+      }
+
+      document.querySelectorAll('#multiCamBar button[data-mview]').forEach(btn => {
+        btn.onclick = () => toggleMultiView(btn.dataset.mview);
+      });
+      $('btnMultiAll').onclick = () => {
+        multiViews = multiViews.length === 4 ? ['front'] : [...MULTI_ORDER];
+        syncMultiCamUI();
+        refresh3DLayers(false);
+      };
+
+      function syncSplitLayout() {
+        const useSplit = (splitScreen || activePreset === 'top') && sceneMode !== 'gs';
+        const ratio = !useSplit ? 0.0 : 0.35;
+        mainStage.splitRatio = ratio;
+        const pct = `${Math.round(ratio * 100)}%`;
+        $('avmSplitDivider').hidden = !useSplit;
+        $('avmSplitDivider').style.left = pct;
+        $('avmTopTag').hidden = !useSplit;
+        $('avmTopHint').hidden = !useSplit;
+        $('leftTagWrap').classList.toggle('full', !useSplit);
+        $('leftTagWrap').style.left = useSplit ? `calc(${pct} + 10px)` : '10px';
+        $('multiCamBar').style.left = useSplit ? `calc(${pct} + 10px)` : '10px';
+        $('camPresets').classList.toggle('full', !useSplit);
+        $('camPresets').style.left = useSplit ? `calc(${pct} + 8px)` : '8px';
+        mainStage.resize();
+        syncMultiCamUI();
+      }
+
+      function applyPreset(presetName, animateCam = true) {
+        activePreset = presetName;
+        document.querySelectorAll('#camPresets button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === presetName)));
+        for (const stage of stages) {
+          stage.camera = stage.perspectiveCamera;
+          stage.controls.enabled = !isWidePreset();
+          stage.targetWallScale = 1.0;
+        }
+        syncSplitLayout();
+        if (isWidePreset()) {
+          camAnim = null;
+        } else {
+          const preset = VIEW_PRESETS[presetName] || VIEW_PRESETS.hero;
+          const toPos = new THREE.Vector3(...preset.pos);
+          const toTgt = new THREE.Vector3(...preset.target);
+          if (animateCam && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            const fromTgt = mainStage.controls.target.clone();
+            const from = new THREE.Spherical().setFromVector3(mainStage.perspectiveCamera.position.clone().sub(fromTgt));
+            const to = new THREE.Spherical().setFromVector3(toPos.clone().sub(toTgt));
+            camAnim = {
+              t0: performance.now(), fromTgt, toTgt, from, to,
+              turn: Math.atan2(Math.sin(to.theta - from.theta), Math.cos(to.theta - from.theta)),
+            };
+          } else {
+            camAnim = null;
+            mainStage.perspectiveCamera.position.copy(toPos);
+            mainStage.controls.target.copy(toTgt);
+          }
+        }
+        refresh3DLayers(false);
+      }
+
+      document.querySelectorAll('#camPresets button').forEach(btn => {
+        btn.onclick = () => {
+          // Manual view tap clears simulated signal/gear overrides cleanly
+          if (btn.dataset.preset !== 'left' && turnSignal === 'left') setTurnSignal(null);
+          if (btn.dataset.preset !== 'right' && turnSignal === 'right') setTurnSignal(null);
+          if (btn.dataset.preset !== 'rear' && gearReverse) setGearReverse(false);
+          applyPreset(btn.dataset.preset, true);
+        };
+      });
+
+      // Interactive 35% Top-Down Minimap click zones: touch any side of the car to jump directly to that OEM view!
+      $('glMain').addEventListener('pointerdown', (e) => {
+        if (mainStage.splitRatio <= 0.01) return;
+        const rect = $('glMain').getBoundingClientRect();
+        const relX = (e.clientX - rect.left) / rect.width;
+        if (relX >= mainStage.splitRatio) return;
+        e.stopPropagation();
+        const nx = (relX / mainStage.splitRatio) * 2 - 1;       // -1 (left) .. +1 (right)
+        const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1; // -1 (front) .. +1 (rear)
+        let targetSide = 'hero';
+        if (Math.hypot(nx, ny) >= 0.34) {
+          targetSide = Math.abs(ny) > Math.abs(nx) * 1.15 ? (ny < 0 ? 'front' : 'rear') : (nx < 0 ? 'left' : 'right');
+        }
+        if (activePreset === 'top' && targetSide !== 'hero') toggleMultiView(targetSide);
+        else applyPreset(targetSide, true);
+      }, true);
+
+      function currentQueryKey() {
+        const maskStr = camMask.map((on, i) => on && cameraAvailable[i] ? '1' : '0').join('');
+        return `index=${current}&mask=${maskStr}&threshold=${$('thSlider').value}&max_u=${$('uSlider').value}`;
+      }
+
+      function ensureMeshesLoaded(q) {
+        if (!q) return;
+        const needPred = (sceneMode === 'radar') || (sceneMode === 'ar' && showStaticShield);
+        const needGt = (rightMode === 'gt3d') && (showStaticShield || sceneMode === 'radar');
+        const needSplatPred = (sceneMode === 'gs');
+        const needSplatGt = (sceneMode === 'gs') && (rightMode === 'gt3d');
+        async function load(endpoint, source, save) {
+          const slot = `${endpoint}/${source}`;
+          if (layerRequests.has(slot)) return;
+          layerRequests.add(slot);
+          try {
+            const response = await fetch(`/api/${endpoint}.bin?${q}&source=${source}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const buf = await response.arrayBuffer();
+            if (lastDataKey === q && currentQueryKey() === q) {
+              save(buf);
+              refresh3DLayers(false);
+            }
+          } catch (error) {
+            console.warn(`Could not load ${slot}`, error);
+          } finally {
+            layerRequests.delete(slot);
+            if (lastDataKey && lastDataKey !== q) ensureMeshesLoaded(lastDataKey);
+          }
+        }
+        if (needPred && meshPredKey !== q) void load('mesh', 'pred', buf => { meshPredKey = q; meshPredBuf = buf; });
+        if (needGt && meshGtKey !== q) void load('mesh', 'gt', buf => { meshGtKey = q; meshGtBuf = buf; });
+        if (needSplatPred && splatPredKey !== q) void load('splats', 'pred', buf => { splatPredKey = q; splatPredBuf = buf; });
+        if (needSplatGt && splatGtKey !== q) void load('splats', 'gt', buf => { splatGtKey = q; splatGtBuf = buf; });
+      }
+
+      function updateSmoothShield(stage, meshBuf, enabled, isRadarDark) {
+        const mesh = stage.smoothMesh;
+        if (!enabled || !meshBuf || meshBuf.byteLength < 8) { mesh.visible = false; return; }
+        const u32 = new Uint32Array(meshBuf, 0, 2);
+        const nV = u32[0], nI = u32[1];
+        if (nV < 3 || nI < 3) { mesh.visible = false; return; }
+        const f32 = new Float32Array(meshBuf, 8, nV * 7);
+        const idx = new Uint32Array(meshBuf, 8 + nV * 7 * 4, nI);
+        const pos = new Float32Array(nV * 3), nrm = new Float32Array(nV * 3), ao = new Float32Array(nV);
+        for (let i = 0; i < nV; i++) {
+          const b = i * 7;
+          pos[i*3] = f32[b]; pos[i*3+1] = f32[b+1]; pos[i*3+2] = f32[b+2];
+          nrm[i*3] = f32[b+3]; nrm[i*3+1] = f32[b+4]; nrm[i*3+2] = f32[b+5];
+          ao[i] = f32[b+6];
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+        geo.setAttribute('aAo', new THREE.BufferAttribute(ao, 1));
+        geo.setIndex(new THREE.BufferAttribute(idx, 1));
+        const old = mesh.geometry; mesh.geometry = geo; old.dispose();
+        stage.smoothMat.uniforms.uBaseAlpha.value = isRadarDark ? 0.34 : 0.10;
+        stage.smoothMat.uniforms.uEdgeAlpha.value = isRadarDark ? 0.85 : 0.65;
+        mesh.visible = true;
+      }
+
+      const neonEdgeMat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.90 });
+      const neonRibbonMat = new THREE.MeshBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.20, depthWrite: false, side: THREE.DoubleSide });
+
+      function updateRoadEdges(stage, polylines, enabled) {
+        while (stage.roadEdgeGroup.children.length) {
+          const c = stage.roadEdgeGroup.children[0];
+          stage.roadEdgeGroup.remove(c);
+          if (c.geometry) c.geometry.dispose();
+        }
+        if (!enabled || !polylines) return;
+        for (const poly of polylines) {
+          if (poly.length < 2) continue;
+          const linePts = poly.map(([x, y]) => ego2w(x, y, 0.04));
+          const topPts = poly.map(([x, y]) => ego2w(x, y, 0.26));
+          stage.roadEdgeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(linePts), neonEdgeMat));
+          const ribPos = [];
+          for (let i = 0; i < linePts.length - 1; i++) {
+            const a = linePts[i], b = linePts[i+1], c = topPts[i+1], d = topPts[i];
+            ribPos.push(a.x,a.y,a.z, b.x,b.y,b.z, c.x,c.y,c.z, a.x,a.y,a.z, c.x,c.y,c.z, d.x,d.y,d.z);
+          }
+          const rGeo = new THREE.BufferGeometry();
+          rGeo.setAttribute('position', new THREE.Float32BufferAttribute(ribPos, 3));
+          stage.roadEdgeGroup.add(new THREE.Mesh(rGeo, neonRibbonMat));
+        }
+      }
+
+      const [zN, yN, xN] = meta.grid.shape;
+      const [gxMin, gxMax] = meta.grid.x, [gyMin, gyMax] = meta.grid.y, zEdges = meta.grid.z_edges;
+      const stepX = (gxMax - gxMin) / xN, stepY = (gyMax - gyMin) / yN;
+      const CODE_COLORS = {
+        1: new THREE.Color(0x94a3b8), 2: new THREE.Color(0x38bdf8),
+        3: new THREE.Color(0xfb923c), 4: new THREE.Color(0xf472b6),
+      };
+
+      function updateInstancedVoxels(stage, dataObj, enabled) {
+        const mesh = stage.voxMesh;
+        if (!enabled || !dataObj) { mesh.count = 0; return; }
+        const dummy = new THREE.Object3D();
+        const cols = new Map();
+        for (let i = 0; i < dataObj.voxels.length; i += 4) {
+          const zi = dataObj.voxels[i], yi = dataObj.voxels[i + 1], xi = dataObj.voxels[i + 2], code = dataObj.voxels[i + 3];
+          if (zi === 0 && code === 1) continue;
+          const k = yi * xN + xi;
+          const cur = cols.get(k);
+          const z0 = Math.max(0.02, zEdges[zi]), z1 = zEdges[zi + 1];
+          if (!cur) cols.set(k, { xi, yi, z0, z1, code });
+          else { cur.z0 = Math.min(cur.z0, z0); cur.z1 = Math.max(cur.z1, z1); cur.code = Math.max(cur.code, code); }
+        }
+        let count = 0;
+        for (const col of cols.values()) {
+          const mx = gxMin + (col.xi + 0.5) * stepX, my = gyMin + (col.yi + 0.5) * stepY;
+          const h = Math.max(0.12, col.z1 - col.z0);
+          dummy.position.set(-my, col.z0 + h / 2, -mx);
+          dummy.scale.set(stepY * 0.86, h, stepX * 0.86);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(count, dummy.matrix);
+          mesh.setColorAt(count, CODE_COLORS[col.code] || CODE_COLORS[1]);
+          count++;
+        }
+        mesh.count = count;
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
+
+      function rebuildStageLabels(stage, objects, enabled) {
+        stage.arObjects = (enabled && objects) ? objects : [];
+        stage.showLabels = enabled;
+        stage.labelRoot.innerHTML = '';
+        for (const o of stage.arObjects) {
+          const el = document.createElement('div');
+          el.className = `ar-pill ${o.cls}`;
+          const name = arFactory.STYLES[o.cls]?.label || o.cls;
+          el.textContent = `${name} · ${o.dist_m.toFixed(1)}m`;
+          stage.labelRoot.append(el);
+        }
+      }
+
+      // 2D Screen-Space AABB Repulsion + OEM Safe-Area Clamping [56px .. height-68px]
+      // Prevents AR pills from EVER overlapping the top status bar, bottom view dock, or 35% minimap!
+      const projVec = new THREE.Vector3();
+      function updateProjectedLabels(stage) {
+        const els = stage.labelRoot.children;
+        if (!stage.showLabels || !els.length) return;
+        const hideForWide = (stage === mainStage && isWidePreset());
+        const w = stage.canvas.clientWidth, h = stage.canvas.clientHeight;
+        const split = stage.splitRatio || 0;
+        const offsetX = Math.round(w * split);
+        const viewW = Math.max(1, w - offsetX);
+        const safeTop = 58, safeBot = Math.max(safeTop + 20, h - 68);
+        const safeLeft = offsetX + 54, safeRight = Math.max(safeLeft + 20, offsetX + viewW - 54);
+        const placed = [];
+        for (let i = 0; i < els.length; i++) {
+          if (hideForWide) { els[i].style.display = 'none'; continue; }
+          const o = stage.arObjects[i];
+          projVec.set(-o.y, o.z + o.h + 0.16, -o.x).project(stage.camera);
+          const vis = projVec.z >= -1 && projVec.z <= 1 && Math.abs(projVec.x) <= 0.98 && Math.abs(projVec.y) <= 0.98;
+          if (!vis) { els[i].style.display = 'none'; continue; }
+          const sx = offsetX + (projVec.x * 0.5 + 0.5) * viewW;
+          const sy = (-projVec.y * 0.5 + 0.5) * h;
+          if (sx < offsetX + 12 || sx > offsetX + viewW - 12 || sy < 24 || sy > h - 24) {
+            els[i].style.display = 'none';
+            continue;
+          }
+          placed.push({ el: els[i], x: sx, y: sy, hw: 46, hh: 12 });
+        }
+        placed.sort((a, b) => a.y - b.y);
+        for (let i = 0; i < placed.length; i++) {
+          for (let j = 0; j < i; j++) {
+            const a = placed[j], b = placed[i];
+            if (Math.abs(a.x - b.x) < (a.hw + b.hw) && Math.abs(a.y - b.y) < (a.hh + b.hh + 4)) {
+              b.y = a.y + a.hh + b.hh + 4;
+            }
+          }
+          placed[i].el.style.display = 'block';
+          placed[i].el.style.left = `${Math.max(safeLeft, Math.min(safeRight, placed[i].x))}px`;
+          placed[i].el.style.top = `${Math.max(safeTop, Math.min(safeBot, placed[i].y))}px`;
+        }
+      }
+
+      function refresh3DLayers(loadLayers = true) {
+        const q = lastDataKey === currentQueryKey() ? lastDataKey : '';
+        if (loadLayers) ensureMeshesLoaded(q);
+        const isClean = sceneMode === 'clean';
+        const isRadar = sceneMode === 'radar';
+        const isGs = sceneMode === 'gs';
+        const useDepth = (sceneMode === 'ar' || sceneMode === 'clean') && depthEnabled && foregroundFrame >= 0 && foregroundFrame === displayedIndex;
+        foreground.update(useDepth, mainStage.bowlMat);
+        foreground.update(useDepth && rightMode === 'gt3d', gtStage.bowlMat);
+        bowlSeams.update(mainStage, !adaptBowl);
+        bowlSeams.update(gtStage, !adaptBowl);
+        $('btnSeamRefine').disabled = !shaderBlend || useDepth || mainStage.bowlMat.uniforms.uSeamActive.value === 0 || isGs || isRadar;
+        for (const stage of stages) stage.bowlMat.uniforms.uSeamRefine.value = (seamRefine && !useDepth) ? 1 : 0;
+        const PRESET_TITLES = {
+          hero:  useDepth ? '3D Toàn cảnh · VF 8' : '3D Toàn cảnh · KB4',
+          top:   '2D Chuẩn xác · 360° + Mũi 180°',
+          front: '3D Lái trước',
+          rear:  '3D Lùi sau',
+          left:  'Hông Trái · Soi bánh Curb',
+          right: 'Hông Phải · Soi bánh Curb',
+        };
+        if (sceneMode === 'ar' || sceneMode === 'clean') {
+          if (isWidePreset()) syncMultiCamUI();
+          else $('leftTitle').textContent = PRESET_TITLES[activePreset] || PRESET_TITLES.hero;
+        }
+        const leg = $('leftLegend');
+        if (leg) leg.hidden = isWidePreset();
+        const pred = q ? lastData.prediction : null;
+        const gt = q ? lastData.ground_truth : null;
+        const row = meta.frames[current] || {};
+        const steer = row.steer_rad || 0.0;
+
+        mainStage.bowl.visible = !isRadar && !isGs;
+        mainStage.splatLayer.mesh.visible = isGs;
+        mainStage.vectorMap.visible = isRadar;
+        mainStage.guideGroup.visible = showGuidelines && !isRadar;
+        mainStage.bowlMat.uniforms.uSmoothSeams.value = shaderBlend ? 1.0 : 0.0;
+        mainStage.bowlMat.uniforms.uXray.value = xrayChassis && groundReady ? 1.0 : 0.0;
+        mainStage.bowlMat.uniforms.uSteerRad.value = steer;
+        mainStage.bowlMat.uniforms.uPdcEnabled.value = (!isClean && showPdc && pred?.pdc_sectors) ? 1.0 : 0.0;
+        if (pred?.pdc_sectors) mainStage.bowlMat.uniforms.uPdcDist.value = pred.pdc_sectors;
+        mainStage.suv.setXray(xrayChassis && groundReady);
+        mainStage.suv.setSteer(steer);
+
+        if (isGs) {
+          const nSplats = mainStage.splatLayer.setBinary(q && splatPredKey === q ? splatPredBuf : null, mainStage.camera);
+          $('leftTitle').textContent = `Profile 2: Feed-Forward 3DGS · ${(nSplats / 1000).toFixed(1)}K Gaussians (DS Ray-LUT)`;
+        }
+
+        const showAr = !isClean && showArBoxes;
+        mainStage.arPool.sync(pred?.objects, showAr, isRadar);
+        rebuildStageLabels(mainStage, pred?.objects, showAr);
+        updateRoadEdges(mainStage, pred?.road_edges, !isClean && (isRadar || showArBoxes));
+        updateSmoothShield(mainStage, q && meshPredKey === q ? meshPredBuf : null, !isClean && !isGs && (showStaticShield || isRadar), isRadar);
+        updateInstancedVoxels(mainStage, pred, !isClean && showVoxels);
+
+        // Right pane GT 3D (Synchronized DS Bowl AR OR LiDAR-Depth 3DGS!)
+        gtStage.bowl.visible = !isGs;
+        gtStage.splatLayer.mesh.visible = isGs && (rightMode === 'gt3d');
+        gtStage.vectorMap.visible = false;
+        gtStage.guideGroup.visible = showGuidelines;
+        gtStage.bowlMat.uniforms.uSmoothSeams.value = shaderBlend ? 1.0 : 0.0;
+        gtStage.bowlMat.uniforms.uXray.value = xrayChassis && groundReady ? 1.0 : 0.0;
+        gtStage.bowlMat.uniforms.uSteerRad.value = steer;
+        gtStage.bowlMat.uniforms.uPdcEnabled.value = showPdc && gt?.pdc_sectors ? 1.0 : 0.0;
+        gtStage.suv.setXray(xrayChassis && groundReady);
+        gtStage.suv.setSteer(steer);
+        if (rightMode === 'gt3d' && gt) {
+          if (gt.pdc_sectors) gtStage.bowlMat.uniforms.uPdcDist.value = gt.pdc_sectors;
+          if (isGs) {
+            const nGtSplats = gtStage.splatLayer.setBinary(q && splatGtKey === q ? splatGtBuf : null, gtStage.camera);
+            $('rightTitle').textContent = `Ground Truth 3DGS (LiDAR Depth · ${(nGtSplats / 1000).toFixed(1)}K Gaussians)`;
+          } else {
+            $('rightTitle').textContent = 'Ground Truth 3D (LiDAR AR + DS Bowl)';
+          }
+          gtStage.arPool.sync(gt.objects, true, false);
+          rebuildStageLabels(gtStage, gt.objects, true);
+          updateRoadEdges(gtStage, gt.road_edges, true);
+          updateSmoothShield(gtStage, q && meshGtKey === q ? meshGtBuf : null, !isGs && (showStaticShield || isRadar), false);
+          updateInstancedVoxels(gtStage, gt, showVoxels);
+        } else {
+          gtStage.arPool.sync([], false, false);
+          rebuildStageLabels(gtStage, [], false);
+          updateRoadEdges(gtStage, [], false);
+          updateSmoothShield(gtStage, null, false, false);
+          updateInstancedVoxels(gtStage, null, false);
+          gtStage.splatLayer.setBinary(null, gtStage.camera);
+        }
+      }
+
+      function selectRightMode(mode) {
+        rightMode = mode;
+        const isCam = mode.startsWith('cam-');
+        const isGt = mode === 'gt3d';
+        if (isCam) activeCam = Number(mode.split('-')[1]);
+        document.querySelectorAll('#rightTabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+        miniCards.forEach((c, idx) => c.classList.toggle('selected', mode === `cam-${idx}`));
+        $('rightCanvas').hidden = isGt;
+        $('glGt').hidden = !isGt;
+        $('labelsGt').hidden = !isGt;
+        $('btnGuidelines').hidden = isGt;
+        $('btnRect').hidden = !isCam;
+        const [direction] = camNames[activeCam].split(' ');
+        const title = isCam ? `2D ${direction} · ${useRect ? 'Ảnh nắn méo' : 'Fisheye gốc'}`
+          : isGt ? 'Ground Truth 3D (LiDAR AR + SDF PDC)' : '2D Từ trên · Chiếu mặt đường';
+        $('rightTitle').textContent = title;
+        $('rightCanvas').setAttribute('aria-label', title);
+        if (!isGt) { void refreshRightImage(); rebuildStageLabels(gtStage, [], false); }
+        else {
+          rightRequest++;
+          $('rightStatus').hidden = true;
+          gtStage.resize();
+          gtStage.perspectiveCamera.position.copy(mainStage.perspectiveCamera.position);
+          gtStage.controls.target.copy(mainStage.controls.target);
+          refresh3DLayers();
+        }
+      }
+      document.querySelectorAll('#rightTabs button').forEach(b => { b.onclick = () => selectRightMode(b.dataset.mode); });
+
+      function drawPoly(ctx, pts, ox, oy, dw, dh, color, dash = [], width = 2.4) {
+        if (!pts || pts.length < 2) return;
+        ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash);
+        ctx.beginPath();
+        pts.forEach(([u, v], i) => { const px = ox + u * dw, py = oy + v * dh; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+        ctx.stroke(); ctx.restore();
+      }
+
+      function drawBevOverlay(ctx, ox, oy, dw, dh) {
+        const { x: [xf, xr], y: [yl, yr], ego: [rear, front, right, left] } = activeSurround.bev_bounds;
+        const u = y => (y - yl) / (yr - yl);
+        const v = x => (x - xf) / (xr - xf);
+        if (showGuidelines) {
+          const line = (pts, color, dash = []) => drawPoly(ctx, pts.map(([x, y]) => [u(y), v(x)]), ox, oy, dw, dh, color, dash, 1.8);
+          for (const y of [right, left]) {
+            line([[front + 0.15, y], [front + 4.2, y]], '#f0df48');
+            line([[rear - 0.15, y], [rear - 3.6, y]], '#f0df48');
+          }
+          for (const d of [1.0, 2.5, 4.0]) line([[front + d, left], [front + d, right]], '#f0df48', [5, 4]);
+          for (const [i, d] of [0.6, 1.5, 3.0].entries()) line([[rear - d, left], [rear - d, right]], ['#ef4d4d', '#ffbd72', '#f0df48'][i]);
+        }
+        const px = ox + u(left) * dw, py = oy + v(front) * dh;
+        const bw = (u(right) - u(left)) * dw, bh = (v(rear) - v(front)) * dh;
+        ctx.save();
+        ctx.fillStyle = '#bccac8'; ctx.strokeStyle = '#354c48'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.roundRect(px, py, bw, bh, Math.min(7, bw / 4)); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#203735';
+        ctx.fillRect(px + bw * 0.12, py + bh * 0.22, bw * 0.76, bh * 0.14);
+        ctx.fillRect(px + bw * 0.12, py + bh * 0.73, bw * 0.76, bh * 0.10);
+        ctx.fillStyle = '#f0f7f4';
+        ctx.fillRect(px + bw * 0.12, py + bh * 0.075, bw * 0.22, 2);
+        ctx.fillRect(px + bw * 0.66, py + bh * 0.075, bw * 0.22, 2);
+        ctx.fillStyle = '#ed695f';
+        ctx.fillRect(px + bw * 0.12, py + bh * 0.91, bw * 0.76, 2);
+        const meter = dw / (yl - yr), sx = ox + 10, sy = oy + dh - 14;
+        ctx.fillStyle = '#0a1312'; ctx.fillRect(sx - 5, sy - 18, Math.max(meter, 24) + 10, 24);
+        ctx.fillStyle = '#e2f0e9'; ctx.font = '11px Segoe UI, sans-serif';
+        ctx.fillText('1 m', sx, sy - 5);
+        ctx.fillRect(sx, sy, meter, 2);
+        ctx.restore();
+      }
+
+      function drawRightCamera() {
+        if (rightMode === 'gt3d') return;
+        const canvas = $('rightCanvas');
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        if (w < 1 || h < 1) return;
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const width = Math.round(w * dpr), height = Math.round(h * dpr);
+        if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = '#060a0c'; ctx.fillRect(0, 0, w, h);
+        const isBev = rightMode === 'bev';
+        const enabled = cameraAvailable.map((present, i) => present && camMask[i]);
+        const hasSignal = isBev ? enabled.some(Boolean) : enabled[activeCam];
+        const status = $('rightStatus');
+        status.hidden = Boolean(lastRightImg && hasSignal);
+        if (!status.hidden) {
+          const text = displayedIndex < 0 || (hasSignal && rightLoading) ? 'Đang tải ảnh'
+            : hasSignal ? 'Ảnh chưa khả dụng'
+            : isBev ? 'Không có camera khả dụng' : 'Camera mất tín hiệu';
+          if (status.textContent !== text) status.textContent = text;
+          return;
+        }
+        const aspect = lastRightImg.width / lastRightImg.height;
+        let dw = w, dh = w / aspect;
+        if (dh > h) { dh = h; dw = h * aspect; }
+        const ox = (w - dw) / 2, oy = (h - dh) / 2;
+        ctx.drawImage(lastRightImg, ox, oy, dw, dh);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(ox, oy, dw, dh); ctx.clip();
+        if (isBev) drawBevOverlay(ctx, ox, oy, dw, dh);
+        else if (showGuidelines && useRect) {
+          const g = activeSurround.rect[activeCam];
+          if (activeCam === 0) {
+            g.tracks.forEach(pts => drawPoly(ctx, pts, ox, oy, dw, dh, 'rgba(240, 223, 72, 0.88)', [], 3));
+            g.bars.forEach(pts => drawPoly(ctx, pts, ox, oy, dw, dh, 'rgba(240, 223, 72, 0.55)', [6, 4], 1.8));
+          } else if (activeCam === 1) {
+            g.tracks.forEach(pts => drawPoly(ctx, pts, ox, oy, dw, dh, 'rgba(240, 223, 72, 0.88)', [], 3));
+            const cols = ['#ef4d4d', '#ffbd72', '#f0df48'];
+            g.bars.forEach((pts, idx) => drawPoly(ctx, pts, ox, oy, dw, dh, cols[idx] || '#f0df48', [], 3));
+          } else {
+            g.tracks.forEach(pts => drawPoly(ctx, pts, ox, oy, dw, dh, 'rgba(240, 223, 72, 0.90)', [7, 5], 2.5));
+            g.bars.forEach(pts => drawPoly(ctx, pts, ox, oy, dw, dh, 'rgba(71, 216, 107, 0.90)', [4, 4], 2.5));
+          }
+        }
+        ctx.restore();
+      }
+
+      const loadImage = url => new Promise(res => {
+        const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = url;
+      });
+
+      async function loadForeground(frame) {
+        try {
+          const response = await fetch(`/api/foreground.bin?index=${frame}`);
+          return response.ok ? await response.arrayBuffer() : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function rightProjectionUrl(frame, present) {
+        const enabled = present.map((yes, i) => yes && camMask[i]);
+        if (rightMode === 'bev' && enabled.some(Boolean)) {
+          return `/api/bev?index=${frame}&mask=${enabled.map(Number).join('')}`;
+        }
+        if (rightMode.startsWith('cam-') && useRect && enabled[activeCam]) {
+          return `/api/cam_rect?index=${frame}&cam=${activeCam}`;
+        }
+        return null;
+      }
+
+      async function refreshRightImage() {
+        if (rightMode === 'gt3d') return;
+        const request = ++rightRequest;
+        lastRightImg = null;
+        rightLoading = true;
+        drawRightCamera();
+        const frame = displayedIndex;
+        if (frame < 0) return;
+        const url = rightProjectionUrl(frame, cameraAvailable);
+        const img = url ? await loadImage(url) : rightMode.startsWith('cam-') && !useRect ? cameraImages[activeCam] : null;
+        if (request !== rightRequest || frame !== displayedIndex) return;
+        lastRightImg = img;
+        rightLoading = false;
+        drawRightCamera();
+      }
+
+      function updateCameraMask() {
+        const mask = new THREE.Vector4(...camMask.map((on, i) => Number(on && cameraAvailable[i])));
+        for (const stage of stages) {
+          stage.bowlMat.uniforms.uCamMask.value.copy(mask);
+          stage.wide2D.mat.uniforms.uCamMask.value.copy(mask);
+        }
+        return mask;
+      }
+
+      async function seedGround() {
+        if (!xrayChassis || groundReady || groundBusy || playing || displayedIndex < 0) return;
+        groundBusy = true;
+        const revision = groundRevision;
+        const mask = camMask.map((on, i) => on && cameraAvailable[i] ? '1' : '0').join('');
+        try {
+          const img = await loadImage(`/api/underbody?index=${current}&mask=${mask}`);
+          if (!img || revision !== groundRevision || !xrayChassis) return;
+          for (const stage of stages) {
+            stage.temporalGround.seedFromImage(img);
+            stage.bowlMat.uniforms.uGroundHist.value = stage.temporalGround.getTexture();
+          }
+          groundReady = true;
+          refresh3DLayers(false);
+        } finally {
+          groundBusy = false;
+          if (revision !== groundRevision) void seedGround();
+        }
+      }
+
+      function updateBowlLayers(resetCorridor = false) {
+        for (const [stage, pack] of [[mainStage, lastData?.prediction], [gtStage, lastData?.ground_truth]]) {
+          const uniforms = stage.bowlMat.uniforms;
+          uniforms.uCamGain.value = cameraGains;
+          const zones = pack?.seam_zones || [];
+          for (let i = 0; i < 8; i++) {
+            const z = zones[i] || [0, 0, 0, 0];
+            stage.targetDynZones[i].set(...z);
+            if (resetCorridor || !playing) stage.curDynZones[i].copy(stage.targetDynZones[i]);
+          }
+          if (resetCorridor || !adaptBowl || pack?.corridor) {
+            const corridor = adaptBowl && !resetCorridor ? pack?.corridor : null;
+            stage.targetLeftPoly.set(...(corridor?.left_poly || defaultLeft));
+            stage.targetRightPoly.set(...(corridor?.right_poly || defaultRight));
+          }
+        }
+      }
+
+      function setAiStatus(text) {
+        if ($('metaLatency').textContent !== text) $('metaLatency').textContent = text;
+      }
+
+      function queueInference() {
+        if (displayedIndex < 0) return;
+        const key = currentQueryKey();
+        if (lastDataKey === key) { refresh3DLayers(false); return; }
+        lastData = null;
+        lastDataKey = '';
+        for (const id of ['mLatency', 'mIou', 'mCov', 'mCounts']) $(id).textContent = '–';
+        updateBowlLayers();
+        refresh3DLayers(false);
+        setAiStatus('AI · Chờ kết quả cho khung hiện tại');
+        queuedInference = key;
+        void runInference();
+      }
+
+      async function runInference() {
+        if (inferenceBusy) return;
+        inferenceBusy = true;
+        try {
+          while (queuedInference !== null) {
+            const key = queuedInference;
+            queuedInference = null;
+            try {
+              const response = await fetch(`/api/infer?${key}`);
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const data = await response.json();
+              if (key !== currentQueryKey() || data.index !== displayedIndex) continue;
+              queuedInference = null;
+              lastData = data;
+              lastDataKey = key;
+              updateBowlLayers();
+              setAiStatus(`AI · Khung ${current + 1} · ${data.latency_ms.toFixed(1)} ms`);
+              $('mLatency').textContent = `${data.latency_ms.toFixed(1)} ms`;
+              $('mIou').textContent = data.metrics.occupancy_iou === null ? '–' : `${(data.metrics.occupancy_iou * 100).toFixed(1)}%`;
+              const coverage = data.metrics.coverage === null ? '–' : `${(data.metrics.coverage * 100).toFixed(1)}%`;
+              $('mCov').textContent = `${coverage} · ${(data.prediction.objects || []).length} đối tượng`;
+              const minPdc = Math.min(...(data.prediction.pdc_sectors || [5.0]));
+              $('mCounts').textContent = minPdc >= 4.9 ? '–' : `${minPdc.toFixed(2)} m (PDC)`;
+              refresh3DLayers();
+            } catch (error) {
+              if (key === currentQueryKey()) setAiStatus('AI · Kết quả không khả dụng');
+              console.warn('Replay inference unavailable', error);
+            }
+          }
+        } finally {
+          inferenceBusy = false;
+        }
+      }
+
+      async function loadFrame(index) {
+        queuedFrame = Math.max(0, Math.min(meta.frames.length - 1, index));
+        if (frameBusy) return;
+        frameBusy = true;
+        const started = performance.now();
+        try {
+          while (queuedFrame !== null) {
+            const frame = queuedFrame;
+            queuedFrame = null;
+            const row = meta.frames[frame];
+            const cam = activeCam, rect = useRect, mode = rightMode;
+            const urls = row.images_present.map((_, c) => `/api/image?index=${frame}&cam=${c}`);
+            const rightUrl = rightProjectionUrl(frame, row.images_present);
+            const [imgs, projectedImg, depthBuffer] = await Promise.all([
+              Promise.all(urls.map((url, c) => row.images_present[c] ? loadImage(url) : null)),
+              rightUrl ? loadImage(rightUrl) : null,
+              depthEnabled && row.lidar_present && foregroundFrame !== frame
+                ? loadForeground(frame) : null,
+            ]);
+            if (queuedFrame !== null && queuedFrame !== frame) continue;
+            queuedFrame = null;
+            const adjacent = frame === displayedIndex + 1 && row.drive_id === meta.frames[displayedIndex]?.drive_id;
+            current = displayedIndex = frame;
+            if (foregroundFrame !== frame) foregroundFrame = foreground.setDepth(depthBuffer, adjacent) ? frame : -1;
+            const speedKmh = row.speed_kmh || 0.0;
+            for (const st of stages) {
+              if (speedKmh <= 16.0) st.targetAdaptStrength = 1.0;
+              else if (speedKmh >= 20.0) st.targetAdaptStrength = 0.55;
+              if (!adjacent) st.curAdaptStrength = st.targetAdaptStrength;
+            }
+            $('timeline').value = current;
+            const localFrame = current - activeClip.start_index + 1;
+            $('timeText').textContent = `Frame ${localFrame} / ${activeClip.count} · ${row.timestamp_s.toFixed(1)} s · ${speedKmh.toFixed(0)} km/h`;
+            cameraImages = imgs;
+            cameraAvailable = imgs.map(Boolean);
+            imgs.forEach((img, c) => {
+              if (img) {
+                miniImgs[c].src = urls[c];
+                camTextures[c].image = img;
+                camTextures[c].needsUpdate = true;
+              } else miniImgs[c].removeAttribute('src');
+            });
+            const mask = updateCameraMask();
+            if (rightMode !== 'gt3d') {
+              if (rightMode === mode && useRect === rect && rightUrl === rightProjectionUrl(frame, cameraAvailable)) {
+                rightRequest++;
+                lastRightImg = mode.startsWith('cam-') && !rect ? imgs[cam] : projectedImg;
+                rightLoading = false;
+                drawRightCamera();
+              } else void refreshRightImage();
+            }
+            // Auto-Trigger: reverse ego odometry (dx > +0.08m) automatically engages Rear view when Auto-View is ON
+            if (autoView && !turnSignal && !gearReverse && (row.odom_from_prev?.[0] || 0) > 0.08 && activePreset !== 'rear') {
+              applyPreset('rear', true);
+            }
+            groundRevision++;
+            if (!adjacent) {
+              groundReady = false;
+              updateBowlLayers(true);
+            }
+            updateCameraColors(adjacent ? 0.28 : 1);
+            if (xrayChassis && groundReady) {
+              for (const stage of stages) {
+                stage.temporalGround.stepOdometry(row.odom_from_prev || [0, 0, 0], cameraGains, mask);
+                stage.bowlMat.uniforms.uGroundHist.value = stage.temporalGround.getTexture();
+              }
+            }
+            queueInference();
+            void seedGround();
+          }
+        } finally {
+          frameBusy = false;
+          schedulePlayback(performance.now() - started);
+        }
+      }
+
+      document.querySelectorAll('#sceneModeTabs button').forEach(btn => {
+        btn.onclick = () => {
+          sceneMode = btn.dataset.scene;
+          document.querySelectorAll('#sceneModeTabs button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+          const titles = {
+            ar: 'Profile 1: KB4 Bowl AR · Tự hiệu chuẩn BA + LiDAR',
+            gs: 'Profile 2: Feed-Forward 3DGS · Đang giải mã...',
+            radar: 'Sa bàn Radar & Vector',
+            clean: '360° Bowl Thuần · Đã khóa ngoại tham 4 Cam',
+          };
+          $('leftTitle').textContent = titles[sceneMode];
+          syncSplitLayout();
+          refresh3DLayers();
+          if (sceneMode === 'ar' && depthEnabled && foregroundFrame !== current && meta.frames[current].lidar_present) loadFrame(current);
+        };
+      });
+
+      function pause(seed = true) {
+        playing = false;
+        clearTimeout(timer);
+        timer = 0;
+        $('play').textContent = 'Phát';
+        if (seed) void seedGround();
+      }
+
+      function schedulePlayback(elapsedMs = 0) {
+        if (!playing || timer || frameBusy) return;
+        const clipEnd = activeClip.start_index + activeClip.count - 1;
+        if (current >= clipEnd) { pause(); return; }
+        const nextFrame = meta.frames[current + 1];
+        if (!nextFrame || nextFrame.drive_id !== activeClip.drive_id) { pause(); return; }
+        const timestampMs = (nextFrame.timestamp_s - meta.frames[current].timestamp_s) * 1000;
+        const interval = Math.max(16, Math.min(1000, timestampMs));
+        timer = setTimeout(() => {
+          timer = 0;
+          void loadFrame(current + 1);
+        }, Math.max(0, interval - elapsedMs));
+      }
+
+      $('play').onclick = () => {
+        if (playing) { pause(); return; }
+        playing = true;
+        $('play').textContent = 'Tạm dừng';
+        schedulePlayback();
+      };
+      $('timeline').oninput = e => { pause(false); loadFrame(Number(e.target.value)); };
+      $('thSlider').oninput = e => { $('thVal').textContent = Number(e.target.value).toFixed(2); queueInference(); };
+      $('uSlider').oninput = e => { $('uVal').textContent = Number(e.target.value).toFixed(2); queueInference(); };
+      function setTurnSignal(dir) {
+        turnSignal = (turnSignal === dir) ? null : dir;
+        $('btnSigLeft').setAttribute('aria-pressed', String(turnSignal === 'left'));
+        $('btnSigRight').setAttribute('aria-pressed', String(turnSignal === 'right'));
+        $('btnSigLeft').classList.toggle('sig-on', turnSignal === 'left');
+        $('btnSigRight').classList.toggle('sig-on', turnSignal === 'right');
+        if (autoView) {
+          if (turnSignal === 'left') { if (gearReverse) setGearReverse(false); applyPreset('left', true); }
+          else if (turnSignal === 'right') { if (gearReverse) setGearReverse(false); applyPreset('right', true); }
+          else if (!gearReverse) applyPreset('hero', true);
+        }
+      }
+      function setGearReverse(on) {
+        gearReverse = Boolean(on);
+        $('btnGearR').setAttribute('aria-pressed', String(gearReverse));
+        $('btnGearR').classList.toggle('gear-r', gearReverse);
+        if (autoView) {
+          if (gearReverse) {
+            if (turnSignal) { turnSignal = null; $('btnSigLeft').classList.remove('sig-on'); $('btnSigRight').classList.remove('sig-on'); $('btnSigLeft').setAttribute('aria-pressed', 'false'); $('btnSigRight').setAttribute('aria-pressed', 'false'); }
+            applyPreset('rear', true);
+          } else if (!turnSignal) {
+            applyPreset('hero', true);
+          }
+        }
+      }
+
+      $('btnSplitView').onclick = () => {
+        splitScreen = !splitScreen;
+        $('btnSplitView').setAttribute('aria-pressed', String(splitScreen));
+        syncSplitLayout();
+      };
+      $('btnAutoView').onclick = () => {
+        autoView = !autoView;
+        $('btnAutoView').setAttribute('aria-pressed', String(autoView));
+      };
+      $('btnSigLeft').onclick = () => setTurnSignal('left');
+      $('btnSigRight').onclick = () => setTurnSignal('right');
+      $('btnGearR').onclick = () => setGearReverse(!gearReverse);
+      $('btnArBoxes').onclick = () => { showArBoxes = !showArBoxes; $('btnArBoxes').setAttribute('aria-pressed', String(showArBoxes)); refresh3DLayers(); };
+      $('btnPdc').onclick = () => { showPdc = !showPdc; $('btnPdc').setAttribute('aria-pressed', String(showPdc)); refresh3DLayers(); };
+      $('btnStaticShield').onclick = () => { showStaticShield = !showStaticShield; $('btnStaticShield').setAttribute('aria-pressed', String(showStaticShield)); refresh3DLayers(); };
+      $('btnVoxels').onclick = () => { showVoxels = !showVoxels; $('btnVoxels').setAttribute('aria-pressed', String(showVoxels)); refresh3DLayers(); };
+      $('btnXray').onclick = () => {
+        xrayChassis = !xrayChassis;
+        groundReady = false;
+        groundRevision++;
+        $('btnXray').setAttribute('aria-pressed', String(xrayChassis));
+        refresh3DLayers();
+        void seedGround();
+      };
+      $('btnAdaptBowl').onclick = () => {
+        adaptBowl = !adaptBowl;
+        $('btnAdaptBowl').setAttribute('aria-pressed', String(adaptBowl));
+        updateBowlLayers();
+        refresh3DLayers(false);
+      };
+      $('btnShaderBlend').onclick = () => { shaderBlend = !shaderBlend; $('btnShaderBlend').setAttribute('aria-pressed', String(shaderBlend)); refresh3DLayers(); };
+      $('btnSeamRefine').onclick = () => {
+        seamRefine = !seamRefine;
+        $('btnSeamRefine').setAttribute('aria-pressed', String(seamRefine));
+        refresh3DLayers(false);
+      };
+      $('btnForeground').onclick = () => {
+        depthEnabled = !depthEnabled;
+        $('btnForeground').setAttribute('aria-pressed', String(depthEnabled));
+        refresh3DLayers();
+        if (depthEnabled && sceneMode === 'ar' && foregroundFrame !== current && meta.frames[current].lidar_present) loadFrame(current);
+      };
+      $('btnGuidelines').onclick = () => { showGuidelines = !showGuidelines; $('btnGuidelines').setAttribute('aria-pressed', String(showGuidelines)); refresh3DLayers(); drawRightCamera(); };
+      $('btnRect').onclick = () => { useRect = !useRect; $('btnRect').setAttribute('aria-pressed', String(useRect)); selectRightMode(rightMode); };
+      new ResizeObserver(drawRightCamera).observe($('rightCanvas'));
+
+      // Asymmetric EMA on Corridor walls (alpha_in = 0.45 when curb moves closer, alpha_out = 0.08 when wider)
+      function morphCorridor(stage) {
+        const stepWall = (cur, tgt, sideSign) => {
+          const dC = tgt.z - cur.z;
+          const movingInward = (sideSign > 0 ? dC < 0 : dC > 0);
+          const alpha = movingInward ? 0.45 : 0.08;
+          cur.x += (tgt.x - cur.x) * 0.22;
+          cur.y += (tgt.y - cur.y) * 0.22;
+          cur.z += dC * alpha;
+        };
+        stepWall(stage.curLeftPoly, stage.targetLeftPoly, 1.0);
+        stepWall(stage.curRightPoly, stage.targetRightPoly, -1.0);
+        stage.curWallScale += (stage.targetWallScale - stage.curWallScale) * 0.14;
+        stage.curAdaptStrength += (stage.targetAdaptStrength - stage.curAdaptStrength) * 0.10;
+        for (let i = 0; i < 8; i++) {
+          const cur = stage.curDynZones[i], tgt = stage.targetDynZones[i];
+          if (tgt.y < 0.001) cur.lerp(tgt, 0.25);
+          else if (cur.y < 0.001 || Math.round(cur.z) !== Math.round(tgt.z)) cur.copy(tgt);
+          else cur.lerp(tgt, 0.25);
+          stage.bowlMat.uniforms.uDynZones.value[i].copy(cur);
+        }
+        stage.bowlMat.uniforms.uLeftPoly.value.copy(stage.curLeftPoly);
+        stage.bowlMat.uniforms.uRightPoly.value.copy(stage.curRightPoly);
+        stage.bowlMat.uniforms.uWallScale.value = stage.curWallScale;
+        stage.bowlMat.uniforms.uAdaptStrength.value = stage.curAdaptStrength;
+      }
+
+      // Auto-Trigger PDC < 0.8m gentle camera yaw nudge toward closest critical red zone
+      let pdcNudgeGoal = null;
+      function updatePdcAutoNudge() {
+        if (!autoView || activePreset !== 'hero' || turnSignal || gearReverse || camAnim) return;
+        const secs = lastData?.prediction?.pdc_sectors;
+        if (!secs || secs.length !== 8) return;
+        let minIdx = -1, minD = 0.80;
+        for (let i = 0; i < 8; i++) {
+          if (secs[i] < minD) { minD = secs[i]; minIdx = i; }
+        }
+        if (minIdx < 0) { pdcNudgeGoal = null; return; }
+        // Sector angle in ego frame (0=front, 2=left, 4=rear, 6=right) -> gentle lateral shift of target
+        const ang = minIdx * (Math.PI / 4);
+        const base = VIEW_PRESETS.hero;
+        pdcNudgeGoal = new THREE.Vector3(base.target[0] - Math.sin(ang) * 0.45, base.target[1], base.target[2] - Math.cos(ang) * 0.45);
+      }
+
+      function renderStage(stage, tSec, useWide2D) {
+        const w = stage.canvas.clientWidth, h = stage.canvas.clientHeight;
+        if (w < 1 || h < 1) return;
+        morphCorridor(stage);
+        stage.bowlMat.uniforms.uTime.value = tSec;
+        const blinkOn = Math.floor(tSec * 2.8) % 2 === 0;
+        stage.suv.setTurnSignal(turnSignal, blinkOn);
+        stage.controls.update();
+
+        const renderWideDetail = (vx, vy, vw, vh, isRear) => {
+          const u = stage.wide2D.mat.uniforms;
+          u.uWideCam.value = isRear ? 1.0 : 0.0;
+          u.uMirror.value = isRear ? 1.0 : 0.0;
+          u.uAspect.value = vw / Math.max(vh, 1);
+          u.uSteerRad.value = stage.bowlMat.uniforms.uSteerRad.value;
+          u.uShowGuides.value = showGuidelines ? 1.0 : 0.0;
+          stage.renderer.setViewport(vx, vy, vw, vh);
+          stage.renderer.setScissor(vx, vy, vw, vh);
+          stage.renderer.render(stage.wide2D.scene, stage.wide2D.camera);
+        };
+
+        const render3DTile = (vx, vy, vw, vh, presetName) => {
+          const preset = VIEW_PRESETS[presetName] || VIEW_PRESETS.hero;
+          const asp = vw / Math.max(vh, 1);
+          // Adapt vertical FOV on narrow portrait tiles (1x2 or 2x2) so curb + wheel + bikes stay inside frame
+          const fov = asp < 1.12
+            ? Math.min(58, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(20)) / Math.max(asp, 0.52))))
+            : 38;
+          stage.tileCamera.fov = fov;
+          stage.tileCamera.aspect = asp;
+          stage.tileCamera.position.fromArray(preset.pos);
+          stage.tileCamera.lookAt(...preset.target);
+          stage.tileCamera.updateProjectionMatrix();
+          stage.renderer.setViewport(vx, vy, vw, vh);
+          stage.renderer.setScissor(vx, vy, vw, vh);
+          stage.renderer.render(stage.scene, stage.tileCamera);
+        };
+
+        const split = stage.splitRatio || 0;
+        if (split > 0.01) {
+          const wTop = Math.round(w * split);
+          const wDetail = Math.max(1, w - wTop);
+          const prevWall = stage.bowlMat.uniforms.uWallScale.value;
+          const prevSeam = stage.bowlMat.uniforms.uSeamActive.value;
+          const prevDepth = stage.bowlMat.uniforms.uDepthActive.value;
+
+          stage.renderer.setScissorTest(true);
+          // Pass 1 (Left 35%): Tight 2D Top-Down 360° (flat ground + no wall occlusion holes!)
+          stage.renderer.setViewport(0, 0, wTop, h);
+          stage.renderer.setScissor(0, 0, wTop, h);
+          stage.bowlMat.uniforms.uWallScale.value = 0.0;
+          stage.bowlMat.uniforms.uSeamActive.value = 0.0;
+          stage.bowlMat.uniforms.uDepthActive.value = 0.0;
+          stage.bowlMat.uniforms.uTopFade.value = 1.0;
+          stage.renderer.render(stage.scene, stage.topCamera);
+
+          // Pass 2 (Right 65%): Multi-Cam 1–4 Grid (2D 180° + 3D Curb Views) OR Active 3D Bowl View
+          stage.bowlMat.uniforms.uWallScale.value = prevWall;
+          stage.bowlMat.uniforms.uSeamActive.value = prevSeam;
+          stage.bowlMat.uniforms.uDepthActive.value = prevDepth;
+          stage.bowlMat.uniforms.uTopFade.value = 0.0;
+          if (useWide2D) {
+            const layout = computeMultiCamTiles(wTop, wDetail, h, multiViews);
+            for (const t of layout.tiles) {
+              const m = MULTI_META[t.view];
+              if (m.type === 'wide2d') renderWideDetail(t.rx, t.ry, t.cw, t.ch, m.isRear);
+              else render3DTile(t.rx, t.ry, t.cw, t.ch, m.preset);
+            }
+          } else {
+            stage.renderer.setViewport(wTop, 0, wDetail, h);
+            stage.renderer.setScissor(wTop, 0, wDetail, h);
+            if (sceneMode === 'gs') stage.splatLayer.sortByCamera(stage.perspectiveCamera);
+            stage.renderer.render(stage.scene, stage.perspectiveCamera);
+          }
+          stage.renderer.setScissorTest(false);
+        } else {
+          stage.renderer.setScissorTest(false);
+          stage.renderer.setViewport(0, 0, w, h);
+          stage.bowlMat.uniforms.uTopFade.value = 0.0;
+          if (useWide2D) {
+            renderWideDetail(0, 0, w, h, false);
+          } else {
+            if (sceneMode === 'gs') stage.splatLayer.sortByCamera(stage.camera);
+            stage.renderer.render(stage.scene, stage.camera);
+          }
+        }
+        updateProjectedLabels(stage);
+      }
+
+      function animate(now) {
+        requestAnimationFrame(animate);
+        const tSec = now * 0.001;
+        if (camAnim) {
+          const t = Math.min(1, (now - camAnim.t0) / 420);
+          const ease = 1 - Math.pow(1 - t, 3);
+          mainStage.controls.target.lerpVectors(camAnim.fromTgt, camAnim.toTgt, ease);
+          mainStage.perspectiveCamera.position
+            .setFromSphericalCoords(THREE.MathUtils.lerp(camAnim.from.radius, camAnim.to.radius, ease),
+              THREE.MathUtils.lerp(camAnim.from.phi, camAnim.to.phi, ease), camAnim.from.theta + ease * camAnim.turn)
+            .add(mainStage.controls.target);
+          if (t >= 1) camAnim = null;
+        } else if (activePreset === 'hero' && autoView) {
+          updatePdcAutoNudge();
+          if (pdcNudgeGoal) mainStage.controls.target.lerp(pdcNudgeGoal, 0.05);
+        }
+        renderStage(mainStage, tSec, isWidePreset());
+        if (rightMode === 'gt3d') {
+          renderStage(gtStage, tSec, false);
+        }
+      }
+
+      syncSplitLayout();
+      applyClip(clips[0], clips[0].drive_id === 'COMPLEX CITY' ? 30 : Math.min(19, clips[0].count - 1));
+      requestAnimationFrame(animate);
+    })();
+  </script>
+</body>
+</html>

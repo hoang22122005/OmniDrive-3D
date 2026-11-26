@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111916">
+  <title>OmniShield-X · Sa bàn ADAS</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="geometry.js"></script>
+  <script defer src="replay.js"></script>
+  <script defer src="visual.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="OmniShield-X"><span class="logo" aria-hidden="true"></span>OmniShield<span class="brand-x">-X</span></a>
+    <div class="top-actions">
+      <span class="source"><span class="dot"></span>Dữ liệu mô phỏng</span>
+      <button type="button" id="openLog" class="quiet">Mở hộp đen</button>
+      <input type="file" id="logFile" accept=".json,application/json" hidden>
+    </div>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="title">
+      <div><p class="overline">Trình diễn ADAS</p><h1 id="title">Sa bàn nhận thức 3D</h1></div>
+      <div class="scene-control">
+        <label for="scene">Kịch bản</label>
+        <select id="scene"></select>
+      </div>
+    </section>
+    <div class="layout">
+      <section class="workspace" aria-label="Không gian replay">
+        <section class="viewport" aria-label="Bản đồ 3D">
+          <canvas id="world" tabindex="0" aria-label="Sa bàn 3D. Dùng phím mũi tên để xoay hoặc nút 2D và 3D bên trên."></canvas>
+          <div class="viewbar">
+            <div class="view-title"><span class="dot"></span><span id="viewSource">Voxel từ 4 fisheye RGB-D</span></div>
+            <div class="segmented" aria-label="Góc nhìn">
+              <button id="view3d" type="button" aria-pressed="true">3D</button>
+              <button id="view2d" type="button" aria-pressed="false">Từ trên</button>
+              <button id="viewReset" type="button" title="Đặt lại góc nhìn">Đặt lại</button>
+            </div>
+          </div>
+          <div id="overlay" class="view-overlay"><b id="overlayTitle"></b><span id="overlayText"></span></div>
+          <div class="legend"><span class="swatch occupied">Có vật cản</span><span class="swatch free">Đã thấy trống</span><span class="swatch shadow">Bị che</span><span class="swatch unknown">Chưa quan sát</span></div>
+          <div class="world-hint">Kéo để xoay · Cuộn để thu phóng</div>
+        </section>
+        <section class="transport" aria-label="Điều khiển replay">
+          <button type="button" id="play" class="play">Phát</button>
+          <label for="timeline" class="sr">Thời gian replay</label><input type="range" id="timeline" min="0" value="0">
+          <output id="time" for="timeline">0,00 s</output>
+          <button type="button" id="record" class="quiet">Lưu hộp đen</button>
+        </section>
+        <section class="cameras" id="cameras" aria-label="Bốn camera fisheye">
+        </section>
+      </section>
+      <aside class="side">
+        <div class="side-head"><h2>12 tính năng</h2><span id="alerts">0 cảnh báo</span></div>
+        <div id="features" class="feature-list" aria-label="Chọn lớp tính năng"></div>
+        <div class="metrics">
+          <div><span>Voxel có vật cản</span><output id="voxels">–</output></div>
+          <div><span>Hợp nhất CPU</span><output id="latency">–</output></div>
+          <div><span>Sai lệch bề mặt TB</span><output id="accuracy">–</output></div>
+          <div><span>Độ phủ quan sát</span><output id="coverage">–</output></div>
+        </div>
+        <details class="notes">
+          <summary>Lớp bản đồ và giới hạn</summary>
+          <div class="layer-controls">
+            <label><input type="checkbox" id="layerFree" checked> Trống</label>
+            <label><input type="checkbox" id="layerShadow" checked> Bị che</label>
+            <label><input type="checkbox" id="layerTruth"> Khung tham chiếu</label>
+          </div>
+          <p>Bản đồ tái dựng từ độ sâu và nhãn pixel mô phỏng. Sai lệch đo từ tâm voxel đến bề mặt gần nhất của cảnh mô phỏng. Mức phanh chỉ dùng trong mô phỏng.</p>
+        </details>
+      </aside>
+    </div>
+    <p id="status" class="announcement" role="status"></p>
+  </main>
+  <template id="cameraTemplate"><article class="camera-card"><div class="cam-head"><b></b><span class="cam-status"></span></div><canvas aria-label="Ảnh camera mô phỏng"></canvas><label>Tình trạng <select aria-label="Tình trạng camera"><option value="ok">Bình thường</option><option value="mud">Bùn che</option><option value="glare">Lóa đèn</option><option value="offline">Mất tín hiệu</option></select></label></article></template>
+</body>
+</html>

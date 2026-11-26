@@ -1,0 +1,12 @@
+{
+  "smoke": {"mode": "smoke", "id": "smoke", "seed": 42},
+  "prepare": {"mode": "prepare", "id": "phenikaa-data"},
+  "edge-42": {"mode": "train", "id": "edge-42", "seed": 42, "config": "configs/train/edge.json"},
+  "edge-77": {"mode": "train", "id": "edge-77", "seed": 77, "config": "configs/train/edge.json"},
+  "edge-123": {"mode": "train", "id": "edge-123", "seed": 123, "config": "configs/train/edge.json"},
+  "final-supervised": {"mode": "train", "id": "final-supervised", "seed": 42, "config": "configs/train/final_supervised.json"},
+  "evaluation": {"mode": "score", "id": "evaluation"},
+  "prepare-mvp": {"mode": "prepare-mvp", "id": "phenikaa-real-mvp-data"},
+  "mvp-real": {"mode": "train", "id": "phenikaa-real-mvp-edge", "seed": 42, "config": "configs/train/mvp_real.json"},
+  "replay-mvp": {"mode": "replay-mvp", "id": "phenikaa-real-mvp-eval"}
+}

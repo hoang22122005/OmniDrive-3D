@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "PHENIKAA Mini Dataset",
+  "license": "CC BY-NC-SA 4.0",
+  "release_url": "https://drive.google.com/drive/folders/1G490BK62MlmYhMMlapE_Smm6JgO3WmnJ",
+  "calibration": [
+    [
+      "Sensor_Extrinsics.json",
+      "1Tmb7ISakv4dgFn513bW-gfsszPvXMply",
+      1718
+    ],
+    [
+      "Camera_Intrinsics.json",
+      "1_sgYcWWV2VpYsAjcP-SErZPwRDGgouRU",
+      3351
+    ]
+  ],
+  "clips": [
+    "complex_city.json",
+    "complex_urban.json"
+  ]
+}

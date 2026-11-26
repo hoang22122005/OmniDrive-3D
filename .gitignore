@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+/.cache/
+/.venv*/
+/data/raw/*
+!/data/raw/README.md
+/data/prepared/*
+!/data/prepared/README.md
+/weights/*
+!/weights/README.md
+/runs/*
+!/runs/README.md
+/dist/
+*.egg-info/
