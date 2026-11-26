@@ -468,6 +468,43 @@ class PipelineTest(unittest.TestCase):
         )
         self.assertLessEqual(max_edge, 0.66)
 
+    def test_fisheye_kb4_4point_pnp_recovers_6dof_pose(self):
+        import copy
+        from omnishield.eval.scene3d import solve_fisheye_pnp_camera
+        from omnishield.geometry.calibration import project, rigid_matrix
+
+        rig = next(iter(self.manifest["rigs"].values()))
+        cam_gt = copy.deepcopy(rig["cameras"][0])
+        cam_gt["model"] = "kb4"
+        cam_gt["distortion"] = [0.05, -0.02, 0.004, -0.001]
+        cam_gt["max_theta_deg"] = 95.0
+        sh, sw = cam_gt["image_hw"]
+
+        # 4 non-collinear calibration mat corners on z = 0 in front of vehicle
+        world_pts = np.array([
+            [3.5,  1.4, 0.0],
+            [3.5, -1.4, 0.0],
+            [5.5, -1.4, 0.0],
+            [5.5,  1.4, 0.0],
+        ], dtype=np.float64)
+        uv_gt, _, valid = project(world_pts, cam_gt, (sh, sw))
+        self.assertTrue(bool(valid.all()))
+
+        # Perturb initial extrinsics significantly (+6 deg rot, +12 cm shift) and verify PnP recovers exact pose!
+        t_gt = rigid_matrix(cam_gt["T_cam_from_ego"], cam_gt["slot"])
+        ang = np.deg2rad(6.0)
+        r_pert = np.array([[np.cos(ang), 0.0, np.sin(ang)], [0.0, 1.0, 0.0], [-np.sin(ang), 0.0, np.cos(ang)]])
+        t_pert = t_gt.copy()
+        t_pert[:3, :3] = r_pert @ t_gt[:3, :3]
+        t_pert[:3, 3] = t_gt[:3, 3] + np.array([0.08, -0.05, 0.12])
+        cam_init = copy.deepcopy(cam_gt)
+        cam_init["T_cam_from_ego"] = t_pert.tolist()
+
+        res = solve_fisheye_pnp_camera(cam_init, uv_gt, world_pts)
+        self.assertLess(res["reproj_rmse_px"], 0.1)
+        t_rec = np.asarray(res["T_cam_from_ego"], dtype=np.float64)
+        self.assertLess(float(np.linalg.norm(t_rec[:3, 3] - t_gt[:3, 3])), 0.01)
+
 
 if __name__ == "__main__":
     unittest.main()

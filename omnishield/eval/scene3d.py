@@ -545,12 +545,12 @@ def calibrate_rig_extrinsics_photometric(
         if sum(straight_mask) < max(8, len(valid_rows) // 4):
             straight_mask = [True] * len(valid_rows)
 
-    # Curb-safe flat-asphalt overlap zones for all 4 corners (FL, FR, RL, RR)
+    # Curb-safe flat-asphalt overlap zones covering both near & far lane lines (FL, FR, RL, RR)
     zone_defs = (
-        ((2.2, 5.2), (0.95, 1.72), 0, 2),
-        ((2.2, 5.2), (-2.20, -0.95), 0, 3),
-        ((-5.2, -2.2), (0.95, 1.72), 1, 2),
-        ((-5.2, -2.2), (-2.20, -0.95), 1, 3),
+        ((2.2, 6.4), (0.95, 1.72), 0, 2),
+        ((2.2, 6.4), (-2.30, -0.95), 0, 3),
+        ((-6.0, -2.2), (0.95, 1.72), 1, 2),
+        ((-6.0, -2.2), (-2.30, -0.95), 1, 3),
     )
     zone_pts, zone_slices = [], []
     z_off = 0
@@ -721,11 +721,11 @@ def calibrate_rig_extrinsics_photometric(
         vc_t = torch.tensor([c.get("valid_circle", [0.0, 0.0, -1.0]) for c in cams], dtype=torch.float32, device=device)
         max_th_t = torch.tensor([np.deg2rad(min(c["max_theta_deg"], 92.0)) for c in cams], dtype=torch.float32, device=device)
 
-        def loss_fn(pyr, frame_idx, rpy_val, dz_val, dxy_val, gp_ab):
+        def loss_fn(pyr, frame_idx, rpy_val, dz_val, dxy_val, gp_abc):
             pyr_sub = pyr[frame_idx]
             flat_sub = flat_t[frame_idx]
             sub_cnt = len(frame_idx)
-            pz = gp_ab[0] * pts_xy_t[:, 0] + gp_ab[1] * pts_xy_t[:, 1] + pc
+            pz = gp_abc[0] * pts_xy_t[:, 0] + gp_abc[1] * pts_xy_t[:, 1] + gp_abc[2]
             pts3 = torch.cat([pts_xy_t, pz[:, None]], dim=-1)
             r_d = _euler_xyz_torch(rpy_val)
             dt_val = torch.cat([dxy_val, dz_val[:, None]], dim=-1)
@@ -781,7 +781,7 @@ def calibrate_rig_extrinsics_photometric(
                 return (rpy_val * 0.0).sum()
             return sum(pair_losses) / len(pair_losses)
 
-        gp_init = torch.tensor([pa, pb], dtype=torch.float32, device=device)
+        gp_init = torch.tensor([pa, pb, pc], dtype=torch.float32, device=device)
         with torch.no_grad():
             zero_r = torch.zeros((4, 3), device=device)
             zero_dz = torch.zeros(4, device=device)
@@ -797,22 +797,23 @@ def calibrate_rig_extrinsics_photometric(
             init_dz = torch.tensor([0.0, 0.0, best_sdz, best_sdz], device=device)
             val_s1 = float(loss_fn(imgs_fine, val_idx, zero_r, init_dz, zero_xy, gp_init).item())
 
-        # Physical camera height bounds: front=0 (anchor), rear +-3cm, mirrors +-9cm
+        # Physical camera height bounds: front=0 (anchor), rear +-3.2cm, mirrors +-9cm; road plane (pa, pb, pc)
         dz_scale = torch.tensor([0.0, 0.032, 0.090, 0.090], device=device)
+        gp_scale = torch.tensor([0.012, 0.012, 0.060], device=device)
         d_rpy_raw = torch.zeros((4, 3), device=device, requires_grad=True)
         d_dz_raw = torch.atanh(torch.clamp(init_dz / dz_scale.clamp_min(1e-3), -0.95, 0.95)).clone().detach().requires_grad_(True)
         d_xy_raw = torch.zeros((4, 2), device=device, requires_grad=True)
-        gp_raw = torch.zeros(2, device=device, requires_grad=True)
+        gp_raw = torch.zeros(3, device=device, requires_grad=True)
         params = [d_rpy_raw, d_dz_raw, d_xy_raw] + ([gp_raw] if optimize_gp and f_cnt >= 10 else [])
         opt = torch.optim.Adam(params, lr=0.015)
 
         base_rpy = torch.zeros((4, 3), device=device)
         base_dxy = torch.zeros((4, 2), device=device)
-        rot_w = 0.25 if f_cnt >= 10 else 2.20
+        rot_w = 0.22 if f_cnt >= 10 else 2.20
         stages = (
             (imgs_coarse, 55, 0.014, float(np.deg2rad(3.5 if f_cnt >= 10 else 1.5)), 0.035),
             (imgs_med, 65, 0.008, float(np.deg2rad(1.4 if f_cnt >= 10 else 0.8)), 0.016),
-            (imgs_fine, 85, 0.004, float(np.deg2rad(0.7 if f_cnt >= 10 else 0.5)), 0.008),
+            (imgs_fine, 90, 0.004, float(np.deg2rad(0.7 if f_cnt >= 10 else 0.5)), 0.008),
         )
         for stage_imgs, n_steps, lr, max_r, max_xy in stages:
             for pg in opt.param_groups:
@@ -822,16 +823,17 @@ def calibrate_rig_extrinsics_photometric(
                 rpy = base_rpy + max_r * torch.tanh(d_rpy_raw)
                 dz = dz_scale * torch.tanh(d_dz_raw)
                 dxy = (base_dxy + max_xy * torch.tanh(d_xy_raw)) if f_cnt >= 10 else zero_xy
-                gp_ab = (gp_init + 0.012 * torch.tanh(gp_raw)) if (optimize_gp and f_cnt >= 10) else gp_init
+                gp_abc = (gp_init + gp_scale * torch.tanh(gp_raw)) if (optimize_gp and f_cnt >= 10) else gp_init
                 sym_z = (dz[2] - dz[3]) ** 2
                 reg = (
                     rot_w * (rpy ** 2).sum()
                     + 0.15 * ((dz - init_dz) ** 2).sum()
                     + 1.20 * sym_z
                     + 3.0 * (dxy ** 2).sum()
-                    + 6.0 * ((gp_ab - gp_init) ** 2).sum()
+                    + 6.0 * ((gp_abc[:2] - gp_init[:2]) ** 2).sum()
+                    + 1.5 * ((gp_abc[2] - gp_init[2]) ** 2)
                 )
-                loss = loss_fn(stage_imgs, train_idx, rpy, dz, dxy, gp_ab) + reg
+                loss = loss_fn(stage_imgs, train_idx, rpy, dz, dxy, gp_abc) + reg
                 loss.backward()
                 opt.step()
             with torch.no_grad():
@@ -847,7 +849,7 @@ def calibrate_rig_extrinsics_photometric(
             dz_f[0] = 0.0
             dxy_f = base_dxy if f_cnt >= 10 else zero_xy.clone()
             dxy_f[0] = 0.0
-            gp_f = (gp_init + 0.012 * torch.tanh(gp_raw)) if (optimize_gp and f_cnt >= 10) else gp_init
+            gp_f = (gp_init + gp_scale * torch.tanh(gp_raw)) if (optimize_gp and f_cnt >= 10) else gp_init
             val_s2 = float(loss_fn(imgs_fine, val_idx, rpy_f, dz_f, dxy_f, gp_f).item())
             if val_s1 <= val_s2:
                 val_after = val_s1
@@ -864,7 +866,7 @@ def calibrate_rig_extrinsics_photometric(
             dt_np[0] = 0.0
             rot_norms_deg = np.rad2deg(np.linalg.norm(rpy_f.cpu().numpy(), axis=1)).round(2).tolist()
             dz_cm = [round(float(v * 100.0), 2) for v in dt_np[:, 2]]
-            gp_est = [round(float(gp_f[0].item()), 6), round(float(gp_f[1].item()), 6), round(float(pc), 5)]
+            gp_est = [round(float(gp_f[0].item()), 6), round(float(gp_f[1].item()), 6), round(float(gp_f[2].item()), 5)]
 
     refined = copy.deepcopy(rig)
     # Cross-frame held-out validation gate selects cleanest generalization (Stage 1 or Stage 2)
@@ -951,6 +953,127 @@ def load_calibrated_rig_profile(path):
     if profile.get("schema_version") != 1 or "rig" not in profile or "cameras" not in profile["rig"]:
         raise ValueError(f"Invalid RigCalibrationProfile schema: {path}")
     return profile
+
+
+def _rodrigues_matrix(rvec):
+    theta = float(np.linalg.norm(rvec))
+    if theta < 1e-12:
+        return np.eye(3, dtype=np.float64)
+    k = rvec / theta
+    kx = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=np.float64)
+    return np.eye(3, dtype=np.float64) + np.sin(theta) * kx + (1.0 - np.cos(theta)) * (kx @ kx)
+
+
+def _matrix_to_rodrigues(rot):
+    tr = float(np.clip((np.trace(rot) - 1.0) * 0.5, -1.0, 1.0))
+    theta = float(np.arccos(tr))
+    if theta < 1e-9:
+        return np.zeros(3, dtype=np.float64)
+    denom = 2.0 * np.sin(theta)
+    if abs(denom) < 1e-9:
+        vals, vecs = np.linalg.eigh(rot)
+        axis = vecs[:, np.argmax(vals)]
+        return axis * theta
+    axis = np.array([rot[2, 1] - rot[1, 2], rot[0, 2] - rot[2, 0], rot[1, 0] - rot[0, 1]], dtype=np.float64) / denom
+    return axis * theta
+
+
+def solve_fisheye_pnp_camera(cam, image_points, world_points):
+    """Solve exact 6-DoF camera extrinsics (T_cam_from_ego) from >=4 clicked calibration mat points (KB4 PnP)."""
+    from scipy.optimize import least_squares
+
+    uv_obs = np.asarray(image_points, dtype=np.float64).reshape(-1, 2)
+    pts_w = np.asarray(world_points, dtype=np.float64).reshape(-1, 3)
+    if len(uv_obs) < 4 or len(uv_obs) != len(pts_w):
+        raise ValueError("Need at least 4 matched (image_point, world_point) pairs for 6-DoF PnP")
+
+    k = np.asarray(cam["K"], dtype=np.float64).reshape(3, 3)
+    fx, fy, cx, cy, skew = float(k[0, 0]), float(k[1, 1]), float(k[0, 2]), float(k[1, 2]), float(k[0, 1])
+    k1, k2, k3, k4 = [float(v) for v in (list(cam.get("distortion", [0, 0, 0, 0])) + [0, 0, 0, 0])[:4]]
+
+    # 1. Exact KB4 unprojection -> normalized bearing rays (for planar homography initialization)
+    py_n = (uv_obs[:, 1] - cy) / fy
+    px_n = (uv_obs[:, 0] - cx - skew * py_n) / fx
+    rd = np.hypot(px_n, py_n)
+    theta = rd.copy()
+    for _ in range(10):
+        t2 = theta * theta
+        f = theta * (1.0 + t2 * (k1 + t2 * (k2 + t2 * (k3 + t2 * k4)))) - rd
+        df = 1.0 + t2 * (3.0 * k1 + t2 * (5.0 * k2 + t2 * (7.0 * k3 + 9.0 * t2 * k4)))
+        theta = np.clip(theta - f / np.maximum(df, 1e-6), 0.0, np.pi * 0.495)
+    scale = np.where(rd > 1e-9, np.sin(theta) / np.maximum(rd, 1e-9), 1.0)
+    rays = np.column_stack([px_n * scale, py_n * scale, np.cos(theta)])
+
+    def proj_kb4(params):
+        rvec, tvec = params[:3], params[3:6]
+        rot = _rodrigues_matrix(rvec)
+        xyz = (pts_w @ rot.T) + tvec[None, :]
+        rad = np.hypot(xyz[:, 0], xyz[:, 1])
+        th = np.arctan2(np.maximum(rad, 1e-9), xyz[:, 2])
+        t2 = th * th
+        r_dist = th * (1.0 + t2 * (k1 + t2 * (k2 + t2 * (k3 + t2 * k4))))
+        sc = np.where(rad > 1e-9, r_dist / np.maximum(rad, 1e-9), 1.0)
+        ux, uy = xyz[:, 0] * sc, xyz[:, 1] * sc
+        u = ux * fx + uy * skew + cx
+        v = uy * fy + cy
+        return np.column_stack([u, v])
+
+    def residuals(params):
+        return (proj_kb4(params) - uv_obs).ravel()
+
+    # Candidate 1: current extrinsics
+    t_init = rigid_matrix(cam["T_cam_from_ego"], cam.get("slot", "cam"))
+    candidates = [np.concatenate([_matrix_to_rodrigues(t_init[:3, :3]), t_init[:3, 3]])]
+
+    # Candidate 2: planar Homography DLT decomposition (works even if camera was rotated wildly from nominal!)
+    if np.ptp(pts_w[:, 2]) < 0.08 and np.all(rays[:, 2] > 0.08):
+        z0 = float(np.mean(pts_w[:, 2]))
+        xy_n = rays[:, :2] / rays[:, 2:3]
+        rows_a = []
+        for (wx, wy, _), (nx, ny) in zip(pts_w, xy_n, strict=True):
+            rows_a.append([wx, wy, 1.0, 0.0, 0.0, 0.0, -nx * wx, -nx * wy, -nx])
+            rows_a.append([0.0, 0.0, 0.0, wx, wy, 1.0, -ny * wx, -ny * wy, -ny])
+        _, _, vt = np.linalg.svd(np.asarray(rows_a, dtype=np.float64))
+        h = vt[-1].reshape(3, 3)
+        nrm = 0.5 * (np.linalg.norm(h[:, 0]) + np.linalg.norm(h[:, 1]))
+        if nrm > 1e-8:
+            h = h / nrm
+            if h[2, 2] < 0:
+                h = -h
+            r1, r2 = h[:, 0], h[:, 1]
+            r3 = np.cross(r1, r2)
+            u_s, _, vt_s = np.linalg.svd(np.column_stack([r1, r2, r3]))
+            rot_h = u_s @ vt_s
+            if np.linalg.det(rot_h) < 0:
+                u_s[:, 2] *= -1.0
+                rot_h = u_s @ vt_s
+            t_h = h[:, 2] - rot_h[:, 2] * z0
+            if (pts_w @ rot_h.T + t_h[None, :])[:, 2].mean() < 0:
+                rot_h[:, :2] *= -1.0
+                t_h = -t_h
+            candidates.append(np.concatenate([_matrix_to_rodrigues(rot_h), t_h]))
+
+    best_sol = None
+    best_cost = float("inf")
+    for p0 in candidates:
+        sol = least_squares(residuals, p0, method="lm", max_nfev=250)
+        if sol.cost < best_cost:
+            best_cost = sol.cost
+            best_sol = sol
+
+    rot_f = _rodrigues_matrix(best_sol.x[:3])
+    tvec_f = best_sol.x[3:6]
+    t_new = np.eye(4, dtype=np.float64)
+    t_new[:3, :3] = rot_f
+    t_new[:3, 3] = tvec_f
+    errs = np.linalg.norm(proj_kb4(best_sol.x) - uv_obs, axis=1)
+    orig_ego = (-rot_f.T @ tvec_f).tolist()
+    return {
+        "T_cam_from_ego": t_new.tolist(),
+        "reproj_rmse_px": round(float(np.sqrt(np.mean(errs ** 2))), 3),
+        "max_err_px": round(float(np.max(errs)), 3),
+        "cam_origin": [round(float(v), 4) for v in orig_ego],
+    }
 
 
 def export_camera_calib(rig):

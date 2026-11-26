@@ -1,3 +1,4 @@
+import copy
 import io
 import json
 import threading
@@ -44,6 +45,7 @@ from omnishield.eval.scene3d import (
     measure_near_field_coverage,
     measure_seam_parallax_report,
     pack_foreground_ranges,
+    solve_fisheye_pnp_camera,
     verify_bowl_mesh_integrity,
 )
 from omnishield.geometry.calibration import Grid, depth_edges, ego_mask, project, rigid_matrix, transform
@@ -727,14 +729,27 @@ class DemoRuntime:
             "frames": self.frame_meta,
         }
 
-    def image_bytes(self, index, cam):
+    def image_bytes(self, index, cam, width=0):
         row = self.dataset.rows[index]
         rel = row["images"][cam]
         if rel is None:
             return None, None
+        if width and width > 0:
+            return self._image_resized_jpeg(index, cam, int(width)), "image/jpeg"
         path = child_path(self.args.raw, rel)
         mime = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
         return path.read_bytes(), mime
+
+    @lru_cache(maxsize=1600)
+    def _image_resized_jpeg(self, index, cam, width):
+        row = self.dataset.rows[index]
+        path = child_path(self.args.raw, row["images"][cam])
+        with Image.open(path) as im:
+            rgb = im.convert("RGB")
+            if rgb.width > width:
+                h = max(1, int(round(rgb.height * width / rgb.width)))
+                rgb = rgb.resize((width, h), Image.Resampling.BILINEAR)
+            return _to_jpeg(np.asarray(rgb, dtype=np.uint8), quality=80)
 
     def bev_jpeg(self, index, mask_bits):
         row = self.dataset.rows[index]
@@ -1131,11 +1146,11 @@ def serve_demo(args):
         def log_message(self, format, *fmt_args):
             return
 
-        def _send(self, status, body, content_type):
+        def _send(self, status, body, content_type, cache_control="no-store"):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache_control)
             self.end_headers()
             try:
                 self.wfile.write(body)
@@ -1178,14 +1193,24 @@ def serve_demo(args):
                 return
             if parsed.path == "/api/image":
                 cam = max(0, min(runtime.config["camera_count"] - 1, int(query.get("cam", ["0"])[0])))
-                data, mime = runtime.image_bytes(idx, cam)
-                self._send(HTTPStatus.OK if data else HTTPStatus.NOT_FOUND, data or b"No image", mime or "text/plain")
+                req_w = int(query.get("w", ["0"])[0])
+                data, mime = runtime.image_bytes(idx, cam, width=req_w if req_w in {480, 640, 800, 960} else 0)
+                self._send(
+                    HTTPStatus.OK if data else HTTPStatus.NOT_FOUND,
+                    data or b"No image",
+                    mime or "text/plain",
+                    cache_control="public, max-age=3600" if data else "no-store",
+                )
                 return
             if parsed.path == "/api/cam_rect":
                 cam = max(0, min(runtime.config["camera_count"] - 1, int(query.get("cam", ["0"])[0])))
                 data = runtime.rect_jpeg(idx, cam)
-                self._send(HTTPStatus.OK if data else HTTPStatus.NOT_FOUND, data or b"No image",
-                           "image/jpeg" if data else "text/plain")
+                self._send(
+                    HTTPStatus.OK if data else HTTPStatus.NOT_FOUND,
+                    data or b"No image",
+                    "image/jpeg" if data else "text/plain",
+                    cache_control="public, max-age=3600" if data else "no-store",
+                )
                 return
             if parsed.path == "/api/cam_wide":
                 cam = max(0, min(runtime.config["camera_count"] - 1, int(query.get("cam", ["0"])[0])))
@@ -1237,6 +1262,118 @@ def serve_demo(args):
                            "application/json; charset=utf-8")
                 return
             self._send(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            if parsed.path not in {"/api/save_calibration", "/api/calibrate_pnp", "/api/auto_calibrate"}:
+                self._send(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(max(0, min(length, 2_000_000))).decode("utf-8") if length > 0 else "{}"
+                payload = json.loads(raw_body or "{}")
+
+                first_drive = runtime.dataset.rows[0]["drive_id"]
+                active_rig = runtime.calibrated_rigs[first_drive]
+                active_gp = runtime.surround[first_drive].ground_plane
+
+                if parsed.path == "/api/calibrate_pnp":
+                    ci = int(payload.get("cam_index", 0))
+                    if ci < 0 or ci >= len(active_rig["cameras"]):
+                        raise ValueError(f"Invalid cam_index: {ci}")
+                    cam = copy.deepcopy(active_rig["cameras"][ci])
+                    res = solve_fisheye_pnp_camera(cam, payload["image_points"], payload["world_points"])
+                    updated_rig = copy.deepcopy(active_rig)
+                    updated_rig["cameras"][ci]["T_cam_from_ego"] = res["T_cam_from_ego"]
+                    for did in list(runtime.calibrated_rigs):
+                        runtime.calibrated_rigs[did] = copy.deepcopy(updated_rig)
+                    calibs_out = export_camera_calib(updated_rig)
+                    for did in list(runtime.surround):
+                        runtime.surround[did].guidelines["camera_calib"] = copy.deepcopy(calibs_out)
+                    self._send(
+                        HTTPStatus.OK,
+                        json.dumps({
+                            "ok": True,
+                            "cam_index": ci,
+                            "reproj_rmse_px": res["reproj_rmse_px"],
+                            "max_err_px": res["max_err_px"],
+                            "cam_origin": res["cam_origin"],
+                            "camera_calib": calibs_out,
+                        }, ensure_ascii=False).encode("utf-8"),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+
+                if parsed.path == "/api/auto_calibrate":
+                    raw_rig = copy.deepcopy(runtime.dataset.rigs[runtime.dataset.rows[0]["rig_id"]])
+                    profile = build_standard_rig_calibration(
+                        raw_rig, runtime.dataset.rows, runtime.args.raw,
+                        mode="camera-only", device=runtime.device, poses=runtime.poses,
+                    )
+                    out_path = Path(args.calibrated_rig) if getattr(args, "calibrated_rig", None) else Path("runs/calib_camera_only_profile.json")
+                    write_json(out_path, profile)
+                    for did in list(runtime.calibrated_rigs):
+                        runtime.calibrated_rigs[did] = copy.deepcopy(profile["rig"])
+                        runtime.surround[did].ground_plane = tuple(profile["ground_plane"])
+                        runtime.surround[did].guidelines["camera_calib"] = copy.deepcopy(profile["camera_calib"])
+                        runtime.surround[did].guidelines["ground_plane"] = list(profile["ground_plane"])
+                    self._send(
+                        HTTPStatus.OK,
+                        json.dumps({
+                            "ok": True,
+                            "saved_path": str(out_path),
+                            "ground_plane": profile["ground_plane"],
+                            "camera_calib": profile["camera_calib"],
+                            "quality": profile["quality"],
+                        }, ensure_ascii=False).encode("utf-8"),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+
+                cam_calibs = payload.get("camera_calib")
+                gp = payload.get("ground_plane")
+                if not isinstance(cam_calibs, list) or len(cam_calibs) != len(active_rig["cameras"]):
+                    raise ValueError("Invalid camera_calib array")
+                updated_rig = copy.deepcopy(active_rig)
+                for cam, cc in zip(updated_rig["cameras"], cam_calibs, strict=True):
+                    mat = np.asarray(cc["t_cam_from_ego"], dtype=np.float64).reshape(4, 4)
+                    cam["T_cam_from_ego"] = mat.tolist()
+                gp_list = [round(float(v), 6) for v in gp] if isinstance(gp, list) and len(gp) == 3 else list(active_gp)
+                out_path = Path(args.calibrated_rig) if getattr(args, "calibrated_rig", None) else Path("runs/calib_manual_profile.json")
+                profile = {
+                    "schema_version": 1,
+                    "calibration_mode": "manual_screen_tuned",
+                    "rig_id": updated_rig.get("rig_id", "default-rig"),
+                    "ground_plane": gp_list,
+                    "road_plane_validation": {"source": "manual_on_screen"},
+                    "vehicle_spec": export_vehicle_spec(updated_rig, ground_plane=gp_list),
+                    "bowl_spec": export_bowl_spec(),
+                    "rig": updated_rig,
+                    "camera_calib": export_camera_calib(updated_rig),
+                    "manual_tuning": payload.get("manual_state", {}),
+                    "quality": {
+                        "rot_deg": [0.0] * len(updated_rig["cameras"]),
+                        "calib_dz_cm": updated_rig.get("calib_dz_cm", [0.0] * len(updated_rig["cameras"])),
+                        "seam_parallax_cm": measure_seam_parallax_report(updated_rig, gp_list),
+                    },
+                }
+                write_json(out_path, profile)
+                for did in list(runtime.calibrated_rigs):
+                    runtime.calibrated_rigs[did] = copy.deepcopy(updated_rig)
+                    runtime.surround[did].ground_plane = tuple(gp_list)
+                    runtime.surround[did].guidelines["camera_calib"] = copy.deepcopy(profile["camera_calib"])
+                    runtime.surround[did].guidelines["ground_plane"] = list(gp_list)
+                self._send(
+                    HTTPStatus.OK,
+                    json.dumps({"ok": True, "saved_path": str(out_path)}, ensure_ascii=False).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
+            except Exception as exc:
+                self._send(
+                    HTTPStatus.BAD_REQUEST,
+                    json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"

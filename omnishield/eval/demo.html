@@ -173,10 +173,38 @@
     .controls { padding: 10px 12px; display: grid; gap: 9px; }
     .ctrl { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
     .ctrl-row { display: flex; justify-content: space-between; color: var(--ink); }
+    .calib-drawer {
+      background: linear-gradient(180deg, #101917, #0b1210); border: 1px solid #2a4239;
+      border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px;
+    }
+    .calib-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .calib-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; }
+    .calib-ctrl { display: grid; gap: 3px; font-size: 11px; color: var(--muted); background: #0d1513; border: 1px solid #1e2f2a; border-radius: 7px; padding: 6px 8px; }
+    .calib-ctrl-top { display: flex; justify-content: space-between; align-items: center; color: var(--ink); font-weight: 600; }
+    .calib-ctrl-row { display: grid; grid-template-columns: 24px 1fr 24px; gap: 5px; align-items: center; }
+    .calib-ctrl-row button { min-height: 22px; padding: 0; font-size: 12px; line-height: 1; }
+    .calib-status { font-size: 11px; color: var(--mint); }
+    .pnp-panel {
+      display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, 1fr); gap: 10px;
+      padding-top: 6px; border-top: 1px solid #1e312b; align-items: start;
+    }
+    .pnp-canvas-wrap { position: relative; background: #060a0c; border: 1px solid #253b34; border-radius: 8px; overflow: hidden; }
+    .pnp-canvas-wrap canvas { width: 100%; aspect-ratio: 16/9; display: block; cursor: crosshair; }
+    .pnp-side { display: grid; gap: 7px; font-size: 11px; color: var(--muted); }
+    .pnp-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .pnp-table th, .pnp-table td { padding: 3px 4px; text-align: left; border-bottom: 1px solid #1a2924; }
+    .pnp-table input {
+      width: 56px; background: #0a1210; color: var(--ink); border: 1px solid #253832;
+      border-radius: 4px; padding: 2px 4px; font-size: 11px; font-variant-numeric: tabular-nums;
+    }
+    .pnp-pin-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    .pnp-row-active { background: rgba(144, 243, 190, 0.08); }
     @media (max-width: 1100px) {
       .screen { grid-template-columns: 1fr; height: auto; }
       .pane { height: 390px; }
       .bottom-grid { grid-template-columns: 1fr; }
+      .calib-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .pnp-panel { grid-template-columns: 1fr; }
     }
     @media (max-width: 720px) { .cams-strip { grid-template-columns: repeat(2, 1fr); } }
   </style>
@@ -187,6 +215,7 @@
     <div class="badges">
       <span class="badge"><span class="dot"></span><span id="metaSource">PHENIKAA · Đang tải...</span></span>
       <span class="badge" id="metaDevice">GPU: —</span>
+      <span class="badge" id="metaFps">Render: — FPS</span>
       <span class="badge" id="metaLatency" role="status">AI · Chờ khung hình</span>
     </div>
   </header>
@@ -215,8 +244,50 @@
         <button type="button" id="btnShaderBlend" aria-pressed="true" title="Cân màu và trộn 2 dải tần Laplacian trong vùng chồng lấn">Ghép mượt</button>
         <button type="button" id="btnSeamRefine" aria-pressed="true" title="Căn hình cục bộ giữa hai ảnh tại đường ghép">Căn hình</button>
         <button type="button" id="btnForeground" aria-pressed="true" title="Dùng độ sâu LiDAR tĩnh để ép vách lòng chảo khớp gờ lề">Vách LiDAR</button>
+        <button type="button" id="btnManualCalib" aria-pressed="false" title="Mở bảng hiệu chỉnh thủ công 4 camera (góc xoay, vị trí, độ sáng, lưới thảm căn chỉnh)">⚙ Chỉnh 4 Cam</button>
       </div>
     </div>
+
+    <section class="calib-drawer" id="calibDrawer" hidden>
+      <div class="calib-head">
+        <div class="tabs" id="calibTargetTabs">
+          <span class="tabs-label">Hiệu chỉnh thủ công</span>
+          <button type="button" data-ctarget="0" aria-pressed="true">Trước (Front)</button>
+          <button type="button" data-ctarget="1" aria-pressed="false">Sau (Rear)</button>
+          <button type="button" data-ctarget="2" aria-pressed="false">Trái (Left)</button>
+          <button type="button" data-ctarget="3" aria-pressed="false">Phải (Right)</button>
+          <button type="button" data-ctarget="ground" aria-pressed="false">Mặt đường</button>
+        </div>
+        <div class="tabs">
+          <button type="button" id="btnAutoCalib" title="Tự động hiệu chuẩn 4 camera + mặt đường (Camera-Only ZNCC, không cần LiDAR hay thảm)">⚡ Tự hiệu chuẩn 4 Cam</button>
+          <button type="button" id="btnPnpMode" aria-pressed="false" title="Chấm 4 góc ô caro trên thảm hiệu chuẩn để tự giải 6-DoF PnP chuẩn gara">🎯 Chấm 4 điểm thảm (PnP)</button>
+          <button type="button" id="btnCalibGrid" aria-pressed="false" title="Trải 4 tấm bạt caro ảo vào ảnh 4 camera theo chuẩn tâm/độ cao VF 8 để test hiệu chuẩn trực tiếp">⊞ Bạt hiệu chuẩn (4 góc)</button>
+          <button type="button" id="btnPerturbCam" title="Giả lập làm lệch góc camera đang chọn (+4° Pitch, -3° Yaw, +10cm Z) để bạn tự chấm PnP hoặc kéo chỉnh lại cho khớp bạt">🎲 Test lệch cam</button>
+          <button type="button" id="btnCalibSave" title="Lưu cấu hình đã chỉnh vào file RigCalibrationProfile trên máy">💾 Lưu Profile</button>
+          <button type="button" id="btnCalibExport" title="Tải file JSON hiệu chuẩn để triển khai lên xe khác">⬇ Xuất JSON</button>
+          <button type="button" id="btnCalibReset" title="Đặt lại toàn bộ chỉnh tay về chuẩn gốc">↺ Khôi phục</button>
+          <span class="calib-status" id="calibStatus"></span>
+        </div>
+      </div>
+      <div class="calib-grid" id="calibControlsGrid"></div>
+      <div class="pnp-panel" id="pnpPanel" hidden>
+        <div class="pnp-canvas-wrap">
+          <canvas id="pnpCanvas" width="960" height="540"></canvas>
+        </div>
+        <div class="pnp-side">
+          <div style="color:var(--ink);font-weight:600">Chấm 4 góc thảm caro (Click hoặc kéo điểm P1–P4 trên ảnh fisheye)</div>
+          <table class="pnp-table">
+            <thead><tr><th>Điểm</th><th>X (m)</th><th>Y (m)</th><th>Z (m)</th><th>Pixel (u, v)</th></tr></thead>
+            <tbody id="pnpTableBody"></tbody>
+          </table>
+          <div class="tabs">
+            <button type="button" id="btnPnpSeed" title="Chiếu sẵn 4 điểm tọa độ thảm lên ảnh từ cấu hình hiện tại">📍 Gợi ý từ cam</button>
+            <button type="button" id="btnPnpSolve" style="background:#173327;border-color:var(--mint);color:var(--mint)" title="Giải toán PnP fisheye KB4 ra 6 bậc tự do (Pitch/Roll/Yaw/X/Y/Z)">✓ Giải PnP 6-DoF</button>
+          </div>
+          <div id="pnpHint">Mẹo: Chọn tab Trước / Sau / Trái / Phải ở trên → kéo P1–P4 vào đúng 4 góc thảm caro → bấm "Giải PnP 6-DoF".</div>
+        </div>
+      </div>
+    </section>
 
     <div class="toolbar">
       <div class="tabs" id="clipTabs" hidden></div>
@@ -349,7 +420,7 @@
 
     const COLOR_SAMPLE_W = 256, COLOR_SAMPLE_H = 144;
     const PLAYBACK_TEXTURE_WIDTH = 640;
-    const PLAYBACK_COLOR_INTERVAL_MS = 240;
+    const PLAYBACK_COLOR_INTERVAL_MS = 450;
     const FOREGROUND_LOOKAHEAD = 3;
     function colorSampleOffset(uv) {
       return uv === null ? -1 : 4 * (Math.floor(uv[1] * COLOR_SAMPLE_H) * COLOR_SAMPLE_W + Math.floor(uv[0] * COLOR_SAMPLE_W));
@@ -401,18 +472,18 @@
           }
         }
 
-        // Fit the pairwise log gains together with a small neutral prior per camera.
+        // Fit the pairwise log gains together with a light neutral prior so large exposure gaps converge cleanly.
         const gains = images.map(() => [0, 0, 0]);
-        for (let pass = 0; pass < 12; pass++) {
+        for (let pass = 0; pass < 24; pass++) {
           for (let i = 0; i < gains.length; i++) {
-            const support = edges[i].reduce((total, edge) => total + edge.weight, 0.12);
+            const support = edges[i].reduce((total, edge) => total + edge.weight, 0.02);
             for (let c = 0; c < 3; c++) {
               gains[i][c] = edges[i].reduce((total, { camera, delta, weight }) =>
                 total + weight * (gains[camera][c] + delta[c]), 0) / support;
             }
           }
         }
-        return { pixels, gains: gains.map(rgb => rgb.map(v => Math.exp(Math.max(-0.38, Math.min(0.38, v))))) };
+        return { pixels, gains: gains.map(rgb => rgb.map(v => Math.exp(Math.max(-0.58, Math.min(0.58, v))))) };
       };
     }
 
@@ -1542,6 +1613,7 @@
           uSteerRad: { value: 0.0 },
           uPdcDist: { value: [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0] },
           uPdcEnabled: { value: 1.0 },
+          uCalibGrid: { value: 0.0 },
           uTopFade: { value: 0.0 },
           uTime: { value: 0.0 },
         },
@@ -1661,6 +1733,7 @@
           uniform float uSteerRad;
           uniform float uPdcDist[8];
           uniform float uPdcEnabled;
+          uniform float uCalibGrid;
           uniform float uTopFade;
           uniform float uTime;
           varying vec3 vEgoPos;
@@ -1683,7 +1756,7 @@
           // 5-tap Gaussian low-pass filter for real-time 2-band Multi-Band (Laplacian/Gaussian) seam blending
           vec3 readLowPass(sampler2D tex, vec2 uv, vec2 imgHW, vec3 gain, float visible) {
             if (visible < 0.5) return vec3(0.0);
-            vec2 d = vec2(6.5) / imgHW;
+            vec2 d = vec2(11.0) / imgHW;
             vec3 c = texture2D(tex, uv).rgb * 0.28
               + (texture2D(tex, uv + vec2( d.x,  d.y)).rgb
                + texture2D(tex, uv + vec2(-d.x,  d.y)).rgb
@@ -1770,12 +1843,11 @@
             vec2 axis2 = normalize(uCamFwd[2]), axis3 = normalize(uCamFwd[3]);
             float c0 = dot(dirEgo, axis0), c1 = dot(dirEgo, axis1);
             float c2 = dot(dirEgo, axis2), c3 = dot(dirEgo, axis3);
-            // Keep longitudinal side curbs/railings (|y| > 1.65m) under Left/Right mirror cams across the full
-            // foreground corridor (x in [-4.2, +9.5]m) so corner seams stay on flat asphalt (z=0) and any
-            // side-to-front/rear handoff happens far out near the bowl rim where parallax is minimal.
-            float fwdSpan = smoothstep(-4.2, -2.2, vEgoPos.x) * (1.0 - smoothstep(6.8, 9.5, vEgoPos.x));
-            if (v2 > 0.5 && b2 > 0.02) c2 += 0.92 * smoothstep(1.50, 1.82, vEgoPos.y) * fwdSpan * smoothstep(0.02, 0.22, b2);
-            if (v3 > 0.5 && b3 > 0.02) c3 += 0.92 * smoothstep(1.50, 1.82, -vEgoPos.y) * fwdSpan * smoothstep(0.02, 0.22, b3);
+            // Keep longitudinal side curbs/railings (|y| > 1.85m) under Left/Right mirror cams only within their
+            // sharp optical zone (x in [-3.8, +5.6]m) so 80-deg grazing periphery never ghosts onto Front cam's lane lines!
+            float fwdSpan = smoothstep(-3.8, -2.0, vEgoPos.x) * (1.0 - smoothstep(4.6, 6.2, vEgoPos.x));
+            if (v2 > 0.5 && b2 > 0.02) c2 += 0.72 * smoothstep(1.68, 2.18, vEgoPos.y) * fwdSpan * smoothstep(0.02, 0.22, b2);
+            if (v3 > 0.5 && b3 > 0.02) c3 += 0.72 * smoothstep(1.68, 2.18, -vEgoPos.y) * fwdSpan * smoothstep(0.02, 0.22, b3);
             float egoRad = length(vEgoPos.xy);
             if (useSeam) {
               float fl = seamCorrection(egoAng, uSeamCenters.x, targets.x, axis0, axis2);
@@ -1846,10 +1918,10 @@
               vec3 rgb3 = readColor(uCam3, uv3, uCamGain[3], valid.w);
               float wall = smoothstep(0.02, 0.45, vWallU);
               float isTop = step(0.5, uTopFade);
-              vec4 wLow = seamWeights(score, valid, mix(mix(6.0, 10.5, wall), 4.8, isTop));
+              vec4 wLow = seamWeights(score, valid, mix(mix(3.6, 5.8, wall), 3.4, isTop));
               vec4 wHigh = seamWeights(score, valid, mix(mix(36.0, 82.0, wall), 16.0, isTop));
               float maxLow = max(max(wLow.x, wLow.y), max(wLow.z, wLow.w));
-              if (sumL > 1.5 && uSmoothSeams > 0.5 && maxLow < 0.992) {
+              if (sumL > 1.5 && uSmoothSeams > 0.5 && maxLow < 0.985) {
                 vec3 colSoft = rgb0 * wLow.x + rgb1 * wLow.y + rgb2 * wLow.z + rgb3 * wLow.w;
                 vec3 moment = rgb0 * rgb0 * wLow.x + rgb1 * rgb1 * wLow.y
                   + rgb2 * rgb2 * wLow.z + rgb3 * rgb3 * wLow.w;
@@ -1857,11 +1929,13 @@
                 float sigma = sqrt(dot(max(moment - colSoft * colSoft, vec3(0.0)), lumaW));
                 float disagree = smoothstep(0.045, 0.18, sigma / (0.12 + dot(colSoft, lumaW))) * (1.0 - 0.72 * isTop);
                 vec4 wSharp = mix(wHigh, seamWeights(score, valid, mix(88.0, 135.0, wall)), disagree);
-                vec4 wLowUse = mix(wLow, wSharp, disagree * 0.48);
-                vec3 lo0 = readLowPass(uCam0, uv0, uCamHW[0], uCamGain[0], valid.x);
-                vec3 lo1 = readLowPass(uCam1, uv1, uCamHW[1], uCamGain[1], valid.y);
-                vec3 lo2 = readLowPass(uCam2, uv2, uCamHW[2], uCamGain[2], valid.z);
-                vec3 lo3 = readLowPass(uCam3, uv3, uCamHW[3], uCamGain[3], valid.w);
+                // Keep low-frequency brightness/color smoothly blended across flat asphalt (eliminates sharp dark bands!)
+                vec4 wLowUse = mix(wLow, wSharp, wall * disagree * 0.18);
+                // Only run 5-tap low-pass on cameras with non-zero seam contribution (cuts texture reads by ~60%!)
+                vec3 lo0 = (wLowUse.x + wSharp.x) > 0.005 ? readLowPass(uCam0, uv0, uCamHW[0], uCamGain[0], valid.x) : vec3(0.0);
+                vec3 lo1 = (wLowUse.y + wSharp.y) > 0.005 ? readLowPass(uCam1, uv1, uCamHW[1], uCamGain[1], valid.y) : vec3(0.0);
+                vec3 lo2 = (wLowUse.z + wSharp.z) > 0.005 ? readLowPass(uCam2, uv2, uCamHW[2], uCamGain[2], valid.z) : vec3(0.0);
+                vec3 lo3 = (wLowUse.w + wSharp.w) > 0.005 ? readLowPass(uCam3, uv3, uCamHW[3], uCamGain[3], valid.w) : vec3(0.0);
                 vec3 colLow = lo0 * wLowUse.x + lo1 * wLowUse.y + lo2 * wLowUse.z + lo3 * wLowUse.w;
                 vec3 colHigh = (rgb0 - lo0) * wSharp.x + (rgb1 - lo1) * wSharp.y
                   + (rgb2 - lo2) * wSharp.z + (rgb3 - lo3) * wSharp.w;
@@ -1931,6 +2005,34 @@
                   alpha = r3 * 0.36;
                 }
                 col = mix(col, pdcCol, clamp(alpha * gapMask, 0.0, 0.82));
+              }
+            }
+
+            // Symmetric 4-Corner Calibration Mats (1.20m x 1.20m, 4x4 30cm checkerboard) around VF 8 center (-0.024, 0)
+            // + Ego X/Y center axes & 1m reference grid for exact installer alignment!
+            if (uCalibGrid > 0.5 && vWallU < 0.08 && bodySdf > 0.01) {
+              vec2 pRel = vec2(vEgoPos.x + 0.024, vEgoPos.y);
+              vec2 aP = abs(pRel);
+              vec2 g1 = abs(fract(pRel + 0.5) - 0.5);
+              vec2 fw1 = max(fwidth(pRel), vec2(0.012));
+              float line1m = 1.0 - min(smoothstep(0.012, 0.012 + fw1.x, g1.x), smoothstep(0.012, 0.012 + fw1.y, g1.y));
+              float axisX = 1.0 - smoothstep(0.018, 0.018 + fw1.y, aP.y);
+              float axisY = 1.0 - smoothstep(0.018, 0.018 + fw1.x, aP.x);
+              float fadeG = 1.0 - smoothstep(5.5, 7.2, length(pRel));
+              col = mix(col, vec3(0.20, 0.80, 0.92), line1m * 0.36 * fadeG);
+              col = mix(col, vec3(0.98, 0.86, 0.22), max(axisX, axisY) * 0.72 * fadeG);
+
+              // Thin target reference frames for the 4 symmetric corner mats (mats themselves are baked into the 4 camera feeds!)
+              bool inMat = (aP.x >= 2.55 && aP.x <= 3.75 && aP.y >= 1.15 && aP.y <= 2.35);
+              if (inMat) {
+                vec2 mUv = vec2((aP.x - 2.55) / 1.20, (aP.y - 1.15) / 1.20);
+                float edgeD = min(min(mUv.x, 1.0 - mUv.x), min(mUv.y, 1.0 - mUv.y));
+                float border = 1.0 - smoothstep(0.018, 0.038, edgeD);
+                col = mix(col, vec3(0.18, 0.96, 0.64), border * 0.90);
+                float dIn = length(mUv);
+                float dOut = length(mUv - vec2(1.0));
+                if (dIn < 0.065) col = mix(col, vec3(0.98, 0.22, 0.22), 0.90);
+                if (dOut < 0.065) col = mix(col, vec3(0.20, 0.85, 0.98), 0.90);
               }
             }
 
@@ -2368,8 +2470,8 @@
     }
 
     function create3DStage(canvas, labelRoot, bowlGeo, camTextures, calibs, meta, arPoolFactory) {
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-      renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(1.25, window.devicePixelRatio || 1));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.04;
 
@@ -2601,14 +2703,627 @@
       let cameraImages = [], cameraAvailable = [false, false, false, false];
       const stages = [mainStage, gtStage];
       const groundStages = aiEnabled ? stages : [mainStage];
+      const autoGains = Array.from({ length: 4 }, () => new THREE.Vector3(1, 1, 1));
       const cameraGains = Array.from({ length: 4 }, () => new THREE.Vector3(1, 1, 1));
       let sampleCameraColors = makeOverlapColorSampler(activeSurround.overlap_uv);
       const gainTarget = new THREE.Vector3();
       let colorUpdatedAt = -Infinity;
+
+      // ------------------------------------------------------------------
+      // Commercial On-Screen 4-Camera Manual Calibration Controller (60 FPS live GPU)
+      // ------------------------------------------------------------------
+      const CALIB_STORAGE_KEY = 'omnishield_manual_calib_v1';
+      const defaultManualState = () => ({
+        cams: Array.from({ length: 4 }, () => ({ pitch: 0, roll: 0, yaw: 0, dx: 0, dy: 0, dz: 0, gain: 1.0, rb: 1.0 })),
+        ground: { pitch: 0, roll: 0, dz: 0 },
+      });
+      function loadManualState() {
+        try {
+          const raw = localStorage.getItem(CALIB_STORAGE_KEY);
+          if (!raw) return defaultManualState();
+          const parsed = JSON.parse(raw);
+          const def = defaultManualState();
+          if (Array.isArray(parsed?.cams) && parsed.cams.length === 4) {
+            def.cams = def.cams.map((c, i) => ({ ...c, ...(parsed.cams[i] || {}) }));
+          }
+          if (parsed?.ground) def.ground = { ...def.ground, ...parsed.ground };
+          return def;
+        } catch {
+          return defaultManualState();
+        }
+      }
+      let manualCalib = loadManualState();
+      let baseCalibs = JSON.parse(JSON.stringify(calibs));
+      let trueMatCalibs = JSON.parse(JSON.stringify(calibs));
+      let baseGroundPlane = [...(activeSurround.ground_plane || [0.0, 0.0, activeSurround.ground_z ?? 0.025])];
+      let trueMatGP = [...baseGroundPlane];
+      let activeCalibTarget = '0';
+      let showCalibGrid = false;
+      const virtualMatCanvases = Array.from({ length: 4 }, () => {
+        const cv = document.createElement('canvas');
+        cv.width = 1280; cv.height = 720;
+        return cv;
+      });
+      const MAT_BOXES_BY_CAM = [
+        [[2.526, 3.726, 1.15, 2.35], [2.526, 3.726, -2.35, -1.15]],     // Front: FL, FR
+        [[-3.774, -2.574, 1.15, 2.35], [-3.774, -2.574, -2.35, -1.15]], // Rear:  RL, RR
+        [[2.526, 3.726, 1.15, 2.35], [-3.774, -2.574, 1.15, 2.35]],     // Left:  FL, RL
+        [[2.526, 3.726, -2.35, -1.15], [-3.774, -2.574, -2.35, -1.15]], // Right: FR, RR
+      ];
+      function bakeVirtualMatsIntoCameras() {
+        if (!cameraImages.length) return;
+        if (!showCalibGrid) {
+          setCameraTextures(cameraImages);
+          if (pnpOpen) drawPnpCanvas();
+          return;
+        }
+        const baked = cameraImages.map((img, ci) => {
+          if (!img) return null;
+          const cv = virtualMatCanvases[ci];
+          const ctx = cv.getContext('2d');
+          ctx.drawImage(img, 0, 0, cv.width, cv.height);
+          const c = trueMatCalibs[ci];
+          if (!c) return cv;
+          const sx = cv.width / c.hw[1], sy = cv.height / c.hw[0];
+          const gp = trueMatGP;
+          const matLabels = [['FL', 'FR'], ['RL', 'RR'], ['FL', 'RL'], ['FR', 'RR']][ci];
+          MAT_BOXES_BY_CAM[ci].forEach(([x0, x1, y0, y1], mi) => {
+            for (let ix = 0; ix < 4; ix++) {
+              for (let iy = 0; iy < 4; iy++) {
+                const xa = x0 + (x1 - x0) * (ix / 4), xb = x0 + (x1 - x0) * ((ix + 1) / 4);
+                const ya = y0 + (y1 - y0) * (iy / 4), yb = y0 + (y1 - y0) * ((iy + 1) / 4);
+                const corners = [[xa, ya], [xb, ya], [xb, yb], [xa, yb]].map(([wx, wy]) => {
+                  const [u, v] = projectEgoToCamPx(c, wx, wy, gp[0] * wx + gp[1] * wy + gp[2]);
+                  return [u * sx, v * sy];
+                });
+                ctx.beginPath();
+                corners.forEach(([px, py], k) => { k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+                ctx.closePath();
+                ctx.fillStyle = ((ix + iy) % 2 === 0) ? '#111416' : '#f4f7f4';
+                ctx.fill();
+              }
+            }
+            // Draw crisp outer mat border + center diagonal cross + mat ID label (FL/FR/RL/RR)
+            const outer = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([wx, wy]) => {
+              const [u, v] = projectEgoToCamPx(c, wx, wy, gp[0] * wx + gp[1] * wy + gp[2]);
+              return [u * sx, v * sy];
+            });
+            ctx.beginPath();
+            outer.forEach(([px, py], k) => { k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+            ctx.closePath();
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 2.0;
+            ctx.stroke();
+            const mx = 0.5 * (x0 + x1), my = 0.5 * (y0 + y1);
+            const [cu, cv2] = projectEgoToCamPx(c, mx, my, gp[0] * mx + gp[1] * my + gp[2]);
+            ctx.fillStyle = 'rgba(10, 17, 15, 0.82)';
+            ctx.fillRect(cu * sx - 14, cv2 * sy - 9, 28, 18);
+            ctx.fillStyle = '#90f3be';
+            ctx.font = 'bold 11px Segoe UI, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(matLabels[mi], cu * sx, cv2 * sy);
+          });
+          // Paint subtle colored corner target rings matching P1-P4 on the 2 baked mats so installers know exact target corners!
+          for (let k = 0; k < 4; k++) {
+            const [wx, wy, wz] = DEFAULT_MAT_WORLD[ci][k];
+            const [u, v] = projectEgoToCamPx(c, wx, wy, wz + gp[0] * wx + gp[1] * wy + gp[2]);
+            ctx.beginPath();
+            ctx.arc(u * sx, v * sy, 7, 0, Math.PI * 2);
+            ctx.strokeStyle = PNP_COLORS[k];
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+          }
+          return cv;
+        });
+        setCameraTextures(baked);
+        if (pnpOpen) drawPnpCanvas();
+      }
+
+      function syncComposedGains() {
+        for (let i = 0; i < 4; i++) {
+          const mc = manualCalib.cams[i];
+          const g = mc.gain ?? 1.0, rb = mc.rb ?? 1.0;
+          cameraGains[i].set(autoGains[i].x * g * rb, autoGains[i].y * g, autoGains[i].z * g / Math.max(0.5, rb));
+        }
+        for (const st of stages) {
+          st.bowlMat.uniforms.uCamGain.value = cameraGains;
+          st.temporalGround.warpMat.uniforms.uCamGain.value = cameraGains;
+          st.wide2D.mat.uniforms.uCamGain.value = cameraGains;
+        }
+      }
+
+      function computeTunedCalibs() {
+        return baseCalibs.map((base, i) => {
+          const mc = manualCalib.cams[i];
+          const m0 = new THREE.Matrix4().set(...base.t_cam_from_ego);
+          const r0 = new THREE.Matrix3().setFromMatrix4(m0);
+          const orig0 = new THREE.Vector3(...base.cam_origin);
+          const origNew = orig0.clone().add(new THREE.Vector3((mc.dx || 0) * 0.01, (mc.dy || 0) * 0.01, (mc.dz || 0) * 0.01));
+          const euler = new THREE.Euler(
+            THREE.MathUtils.degToRad(mc.roll || 0),
+            THREE.MathUtils.degToRad(mc.pitch || 0),
+            THREE.MathUtils.degToRad(mc.yaw || 0),
+            'XYZ'
+          );
+          const rDelta = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationFromEuler(euler));
+          const rNew = rDelta.clone().multiply(r0);
+          const tVec = origNew.clone().applyMatrix3(rNew).negate();
+          const e = rNew.elements; // column-major
+          const tRowMajor = [
+            e[0], e[3], e[6], tVec.x,
+            e[1], e[4], e[7], tVec.y,
+            e[2], e[5], e[8], tVec.z,
+            0, 0, 0, 1,
+          ];
+          const rInv = rNew.clone().transpose().elements;
+          return {
+            ...base,
+            t_cam_from_ego: tRowMajor,
+            cam_origin: [origNew.x, origNew.y, origNew.z],
+            cam_xy: [origNew.x, origNew.y],
+            cam_fwd: [rInv[6], rInv[7]],
+          };
+        });
+      }
+
+      function computeTunedGroundPlane() {
+        const g = manualCalib.ground;
+        return [
+          baseGroundPlane[0] + Math.tan(THREE.MathUtils.degToRad(g.pitch || 0)),
+          baseGroundPlane[1] + Math.tan(THREE.MathUtils.degToRad(g.roll || 0)),
+          baseGroundPlane[2] + (g.dz || 0) * 0.01,
+        ];
+      }
+
+      function applyManualCalibration(persist = true) {
+        calibs = computeTunedCalibs();
+        const gp = computeTunedGroundPlane();
+        for (const st of stages) {
+          updateCamUniforms(st.bowlMat.uniforms, calibs);
+          updateCamUniforms(st.temporalGround.warpMat.uniforms, calibs);
+          updateCamUniforms(st.wide2D.mat.uniforms, calibs);
+          st.bowlMat.uniforms.uGroundPlane.value.set(...gp);
+          st.temporalGround.warpMat.uniforms.uGroundPlane.value.set(...gp);
+          st.wide2D.mat.uniforms.uGroundPlane.value.set(...gp);
+          st.bowlMat.uniforms.uCalibGrid.value = showCalibGrid ? 1.0 : 0.0;
+        }
+        syncComposedGains();
+        if (persist) {
+          try { localStorage.setItem(CALIB_STORAGE_KEY, JSON.stringify(manualCalib)); } catch {}
+        }
+      }
+
+      const CAM_SLIDERS = [
+        { key: 'pitch', label: 'Ngẩng / Cúi (Pitch)', unit: '°', min: -10, max: 10, step: 0.05 },
+        { key: 'roll',  label: 'Nghiêng (Roll)',      unit: '°', min: -10, max: 10, step: 0.05 },
+        { key: 'yaw',   label: 'Xoay ngang (Yaw)',    unit: '°', min: -10, max: 10, step: 0.05 },
+        { key: 'dz',    label: 'Cao độ (ΔZ)',         unit: 'cm', min: -25, max: 25, step: 0.5 },
+        { key: 'dx',    label: 'Tiến / Lùi (ΔX)',     unit: 'cm', min: -25, max: 25, step: 0.5 },
+        { key: 'dy',    label: 'Trái / Phải (ΔY)',    unit: 'cm', min: -25, max: 25, step: 0.5 },
+        { key: 'gain',  label: 'Độ sáng (Gain)',      unit: '×', min: 0.50, max: 1.80, step: 0.01 },
+        { key: 'rb',    label: 'Ấm / Lạnh (R/B)',     unit: '×', min: 0.75, max: 1.30, step: 0.01 },
+      ];
+      const GROUND_SLIDERS = [
+        { key: 'pitch', label: 'Độ dốc dọc (Pitch)',   unit: '°',  min: -2.0, max: 2.0, step: 0.02 },
+        { key: 'roll',  label: 'Nghiêng ngang (Roll)', unit: '°',  min: -2.0, max: 2.0, step: 0.02 },
+        { key: 'dz',    label: 'Cao độ mặt đường ΔZ₀', unit: 'cm', min: -10,  max: 10,  step: 0.5 },
+      ];
+
+      function renderCalibControls() {
+        const grid = $('calibControlsGrid');
+        if (!grid) return;
+        grid.innerHTML = '';
+        const isGround = activeCalibTarget === 'ground';
+        const defs = isGround ? GROUND_SLIDERS : CAM_SLIDERS;
+        const targetObj = isGround ? manualCalib.ground : manualCalib.cams[Number(activeCalibTarget)];
+        for (const d of defs) {
+          const wrap = document.createElement('div');
+          wrap.className = 'calib-ctrl';
+          const val = Number(targetObj[d.key] ?? 0);
+          const fmt = v => (d.unit === '×' ? v.toFixed(2) : (v >= 0 ? `+${v.toFixed(d.step < 0.1 ? 2 : 1)}` : v.toFixed(d.step < 0.1 ? 2 : 1))) + d.unit;
+          wrap.innerHTML = `<div class="calib-ctrl-top"><span>${d.label}</span><output>${fmt(val)}</output></div>
+            <div class="calib-ctrl-row">
+              <button type="button" class="nudge-m">−</button>
+              <input type="range" min="${d.min}" max="${d.max}" step="${d.step}" value="${val}">
+              <button type="button" class="nudge-p">+</button>
+            </div>`;
+          const inp = wrap.querySelector('input');
+          const out = wrap.querySelector('output');
+          const setVal = v => {
+            const clamped = Math.max(d.min, Math.min(d.max, Math.round(v / d.step) * d.step));
+            targetObj[d.key] = clamped;
+            inp.value = String(clamped);
+            out.textContent = fmt(clamped);
+            applyManualCalibration(true);
+            $('calibStatus').textContent = '';
+          };
+          inp.oninput = () => setVal(Number(inp.value));
+          wrap.querySelector('.nudge-m').onclick = () => setVal(Number(inp.value) - d.step);
+          wrap.querySelector('.nudge-p').onclick = () => setVal(Number(inp.value) + d.step);
+          grid.append(wrap);
+        }
+      }
+
+      $('btnManualCalib').onclick = () => {
+        const open = $('calibDrawer').hidden;
+        $('calibDrawer').hidden = !open;
+        $('btnManualCalib').setAttribute('aria-pressed', String(open));
+        if (open) {
+          renderCalibControls();
+          // Default to 4-point calibration mat PnP mode whenever opening calibration drawer!
+          if (!pnpOpen) {
+            pnpOpen = true;
+            $('pnpPanel').hidden = false;
+            $('btnPnpMode').setAttribute('aria-pressed', 'true');
+            if (activeCalibTarget === 'ground') {
+              activeCalibTarget = '0';
+              document.querySelectorAll('#calibTargetTabs button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.ctarget === '0')));
+              renderCalibControls();
+            }
+          }
+          if (!pnpState[currentPnpCamIdx()].seeded) seedPnpFromCurrentCam();
+          else { renderPnpTable(); drawPnpCanvas(); }
+        }
+      };
+      document.querySelectorAll('#calibTargetTabs button').forEach(b => {
+        b.onclick = () => {
+          activeCalibTarget = b.dataset.ctarget;
+          document.querySelectorAll('#calibTargetTabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+          renderCalibControls();
+          if (pnpOpen && activeCalibTarget !== 'ground') {
+            if (!pnpState[currentPnpCamIdx()].seeded) seedPnpFromCurrentCam();
+            else { renderPnpTable(); drawPnpCanvas(); }
+          }
+        };
+      });
+      $('btnCalibGrid').onclick = () => {
+        showCalibGrid = !showCalibGrid;
+        $('btnCalibGrid').setAttribute('aria-pressed', String(showCalibGrid));
+        applyManualCalibration(false);
+        bakeVirtualMatsIntoCameras();
+      };
+      $('btnPerturbCam').onclick = () => {
+        if (!showCalibGrid) {
+          showCalibGrid = true;
+          $('btnCalibGrid').setAttribute('aria-pressed', 'true');
+          bakeVirtualMatsIntoCameras();
+        }
+        const ci = activeCalibTarget === 'ground' ? 0 : Number(activeCalibTarget);
+        manualCalib.cams[ci] = { ...manualCalib.cams[ci], pitch: 4.0, roll: -2.0, yaw: -3.0, dx: 6.0, dy: -5.0, dz: 10.0 };
+        applyManualCalibration(true);
+        renderCalibControls();
+        if (pnpOpen) { seedPnpFromCurrentCam(); drawPnpCanvas(); }
+        $('calibStatus').textContent = `Đã giả lập lệch ${camNames[ci]} (+4° Pitch, -3° Yaw, +10cm Z) — hãy kéo P1–P4 vào góc bạt caro rồi bấm "Giải PnP 6-DoF" hoặc kéo thanh trượt!`;
+      };
+      $('btnCalibReset').onclick = () => {
+        manualCalib = defaultManualState();
+        try { localStorage.removeItem(CALIB_STORAGE_KEY); } catch {}
+        applyManualCalibration(false);
+        renderCalibControls();
+        $('calibStatus').textContent = 'Đã khôi phục chuẩn gốc';
+      };
+      $('btnCalibSave').onclick = async () => {
+        $('calibStatus').textContent = 'Đang lưu...';
+        try {
+          const resp = await fetch('/api/save_calibration', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              camera_calib: computeTunedCalibs(),
+              ground_plane: computeTunedGroundPlane(),
+              manual_state: manualCalib,
+            }),
+          });
+          const res = await resp.json();
+          if (!resp.ok || !res.ok) throw new Error(res.error || `HTTP ${resp.status}`);
+          $('calibStatus').textContent = `Đã lưu -> ${res.saved_path}`;
+        } catch (err) {
+          $('calibStatus').textContent = `Lỗi lưu: ${err.message}`;
+        }
+      };
+      $('btnCalibExport').onclick = () => {
+        const payload = {
+          schema_version: 1,
+          calibration_mode: 'manual_screen_tuned',
+          ground_plane: computeTunedGroundPlane(),
+          camera_calib: computeTunedCalibs(),
+          manual_tuning: manualCalib,
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'rig_calibration_manual.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        $('calibStatus').textContent = 'Đã xuất rig_calibration_manual.json';
+      };
+
+      // 1-Click Targetless Camera-Only Auto-Calibration (ZNCC + Ground Plane)
+      $('btnAutoCalib').onclick = async () => {
+        const btn = $('btnAutoCalib');
+        btn.disabled = true;
+        $('calibStatus').textContent = 'Đang tự hiệu chuẩn 4 camera (Camera-Only ZNCC)...';
+        try {
+          const resp = await fetch('/api/auto_calibrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const res = await resp.json();
+          if (!resp.ok || !res.ok) throw new Error(res.error || `HTTP ${resp.status}`);
+          baseCalibs = JSON.parse(JSON.stringify(res.camera_calib));
+          baseGroundPlane = [...res.ground_plane];
+          manualCalib = defaultManualState();
+          try { localStorage.removeItem(CALIB_STORAGE_KEY); } catch {}
+          applyManualCalibration(false);
+          renderCalibControls();
+          if (pnpOpen) { seedPnpFromCurrentCam(); drawPnpCanvas(); }
+          const maxR = Math.max(0, ...(res.quality?.rot_deg || [0]));
+          const maxZ = Math.max(0, ...(res.quality?.calib_dz_cm || [0]).map(Math.abs));
+          $('calibStatus').textContent = `Tự hiệu chuẩn xong! Δrot=${maxR.toFixed(1)}°, Δz=${maxZ.toFixed(1)}cm -> ${res.saved_path}`;
+        } catch (err) {
+          $('calibStatus').textContent = `Lỗi tự hiệu chuẩn: ${err.message}`;
+        } finally {
+          btn.disabled = false;
+        }
+      };
+
+      // 4-Point Commercial Calibration Mat PnP (Click-to-Calibrate on Fisheye Canvas)
+      const PNP_COLORS = ['#90f3be', '#38bdf8', '#facc15', '#fb923c'];
+      // Exact symmetric 4-corner 1.20m x 1.20m calibration mats around VF 8 center (-0.024, 0):
+      // Inner corners: x = -0.024 +- 2.55m (+2.526 / -2.574), y = +- 1.15m
+      // Outer corners: x = -0.024 +- 3.75m (+3.726 / -3.774), y = +- 2.35m (100% shared between adjacent cam pairs!)
+      const DEFAULT_MAT_WORLD = [
+        [[2.526, 1.15, 0], [2.526, -1.15, 0], [3.726, -2.35, 0], [3.726, 2.35, 0]],     // Front (FL + FR mats)
+        [[-2.574, -1.15, 0], [-2.574, 1.15, 0], [-3.774, 2.35, 0], [-3.774, -2.35, 0]], // Rear  (RR + RL mats)
+        [[2.526, 1.15, 0], [-2.574, 1.15, 0], [-3.774, 2.35, 0], [3.726, 2.35, 0]],     // Left  (FL + RL mats)
+        [[-2.574, -1.15, 0], [2.526, -1.15, 0], [3.726, -2.35, 0], [-3.774, -2.35, 0]], // Right (RR + FR mats)
+      ];
+      let pnpOpen = false, pnpActivePin = 0, pnpDragging = -1;
+      const pnpState = Array.from({ length: 4 }, (_, ci) => ({
+        world: DEFAULT_MAT_WORLD[ci].map(p => [...p]),
+        uv: [[0, 0], [0, 0], [0, 0], [0, 0]],
+        seeded: false,
+      }));
+
+      function projectEgoToCamPx(c, ex, ey, ez) {
+        const m = c.t_cam_from_ego;
+        const x = m[0]*ex + m[1]*ey + m[2]*ez + m[3];
+        const y = m[4]*ex + m[5]*ey + m[6]*ez + m[7];
+        const z = m[8]*ex + m[9]*ey + m[10]*ez + m[11];
+        const rad = Math.hypot(x, y);
+        const th = Math.atan2(Math.max(rad, 1e-6), z);
+        const t2 = th * th, kd = c.k;
+        const rDist = th * (1 + t2 * (kd[0] + t2 * (kd[1] + t2 * (kd[2] + t2 * kd[3]))));
+        const sc = rDist / Math.max(rad, 1e-6);
+        const px = x * sc, py = y * sc;
+        return [
+          Math.max(8, Math.min(c.hw[1] - 8, px * c.fxy[0] + py * (c.skew || 0) + c.cxy[0])),
+          Math.max(8, Math.min(c.hw[0] - 8, py * c.fxy[1] + c.cxy[1])),
+        ];
+      }
+
+      function currentPnpCamIdx() {
+        return activeCalibTarget === 'ground' ? 0 : Number(activeCalibTarget);
+      }
+
+      function seedPnpFromCurrentCam() {
+        const ci = currentPnpCamIdx();
+        const c = calibs[ci];
+        if (!c) return;
+        const gp = computeTunedGroundPlane();
+        pnpState[ci].uv = pnpState[ci].world.map(([wx, wy, wz]) =>
+          projectEgoToCamPx(c, wx, wy, wz + gp[0] * wx + gp[1] * wy + gp[2])
+        );
+        pnpState[ci].seeded = true;
+        renderPnpTable();
+        drawPnpCanvas();
+      }
+
+      function renderPnpTable() {
+        const tbody = $('pnpTableBody');
+        if (!tbody) return;
+        const ci = currentPnpCamIdx();
+        const st = pnpState[ci];
+        tbody.innerHTML = '';
+        for (let k = 0; k < 4; k++) {
+          const tr = document.createElement('tr');
+          if (k === pnpActivePin) tr.className = 'pnp-row-active';
+          tr.onclick = () => { pnpActivePin = k; renderPnpTable(); drawPnpCanvas(); };
+          const [wx, wy, wz] = st.world[k];
+          const [u, v] = st.uv[k];
+          tr.innerHTML = `<td><span class="pnp-pin-dot" style="background:${PNP_COLORS[k]}"></span>P${k + 1}</td>
+            <td><input type="number" step="0.1" value="${wx.toFixed(2)}" data-k="${k}" data-ax="0"></td>
+            <td><input type="number" step="0.1" value="${wy.toFixed(2)}" data-k="${k}" data-ax="1"></td>
+            <td><input type="number" step="0.05" value="${wz.toFixed(2)}" data-k="${k}" data-ax="2"></td>
+            <td style="font-variant-numeric:tabular-nums">${Math.round(u)}, ${Math.round(v)}</td>`;
+          tr.querySelectorAll('input').forEach(inp => {
+            inp.onclick = e => e.stopPropagation();
+            inp.onchange = () => {
+              st.world[Number(inp.dataset.k)][Number(inp.dataset.ax)] = Number(inp.value) || 0;
+            };
+          });
+          tbody.append(tr);
+        }
+      }
+
+      function drawPnpCanvas() {
+        if (!pnpOpen) return;
+        const cv = $('pnpCanvas');
+        const ctx = cv.getContext('2d');
+        const ci = currentPnpCamIdx();
+        const img = showCalibGrid ? virtualMatCanvases[ci] : cameraImages[ci];
+        const c = calibs[ci];
+        ctx.fillStyle = '#060a0c';
+        ctx.fillRect(0, 0, cv.width, cv.height);
+        if (img) ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        if (!c) return;
+        const sx = cv.width / c.hw[1], sy = cv.height / c.hw[0];
+        const gp = computeTunedGroundPlane();
+        ctx.save();
+        // When virtual mats aren't baked into camera feed yet, show a subtle reference projection of the 2 mats
+        if (!showCalibGrid) {
+          for (const [x0, x1, y0, y1] of (MAT_BOXES_BY_CAM[ci] || [])) {
+            for (let ix = 0; ix < 4; ix++) {
+              for (let iy = 0; iy < 4; iy++) {
+                const xa = x0 + (x1 - x0) * (ix / 4), xb = x0 + (x1 - x0) * ((ix + 1) / 4);
+                const ya = y0 + (y1 - y0) * (iy / 4), yb = y0 + (y1 - y0) * ((iy + 1) / 4);
+                const corners = [[xa, ya], [xb, ya], [xb, yb], [xa, yb]].map(([wx, wy]) => {
+                  const [u, v] = projectEgoToCamPx(c, wx, wy, gp[0] * wx + gp[1] * wy + gp[2]);
+                  return [u * sx, v * sy];
+                });
+                ctx.beginPath();
+                corners.forEach(([px, py], k) => { k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+                ctx.closePath();
+                ctx.fillStyle = ((ix + iy) % 2 === 0) ? 'rgba(15, 18, 20, 0.55)' : 'rgba(244, 248, 244, 0.62)';
+                ctx.fill();
+              }
+            }
+          }
+        }
+        const uvs = pnpState[ci].uv;
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        uvs.forEach(([u, v], i) => { i ? ctx.lineTo(u * sx, v * sy) : ctx.moveTo(u * sx, v * sy); });
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        uvs.forEach(([u, v], k) => {
+          const px = u * sx, py = v * sy;
+          const active = k === pnpActivePin;
+          ctx.beginPath();
+          ctx.arc(px, py, active ? 10 : 7, 0, Math.PI * 2);
+          ctx.fillStyle = PNP_COLORS[k];
+          ctx.fill();
+          ctx.lineWidth = active ? 3 : 2;
+          ctx.strokeStyle = '#060a0c';
+          ctx.stroke();
+          ctx.fillStyle = '#060a0c';
+          ctx.font = 'bold 10px Segoe UI, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`P${k + 1}`, px, py);
+        });
+        // Live 3x Magnifier Loupe with precision crosshair while dragging a pin P1-P4!
+        if (pnpDragging >= 0 && img) {
+          const [du, dv] = uvs[pnpDragging];
+          const px = du * sx, py = dv * sy;
+          const rLoupe = 58;
+          const lx = px > cv.width * 0.5 ? 74 : cv.width - 74;
+          const ly = 74;
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(lx, ly, rLoupe, 0, Math.PI * 2);
+          ctx.clip();
+          const imgW = img.naturalWidth || img.width, imgH = img.naturalHeight || img.height;
+          const srcX = (du / c.hw[1]) * imgW, srcY = (dv / c.hw[0]) * imgH;
+          const zoom = 3.2;
+          const halfW = (rLoupe / zoom) * (imgW / cv.width), halfH = (rLoupe / zoom) * (imgH / cv.height);
+          ctx.drawImage(img, srcX - halfW, srcY - halfH, halfW * 2, halfH * 2, lx - rLoupe, ly - rLoupe, rLoupe * 2, rLoupe * 2);
+          ctx.strokeStyle = PNP_COLORS[pnpDragging];
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(lx - 18, ly); ctx.lineTo(lx + 18, ly);
+          ctx.moveTo(lx, ly - 18); ctx.lineTo(lx, ly + 18);
+          ctx.stroke();
+          ctx.restore();
+          ctx.beginPath();
+          ctx.arc(lx, ly, rLoupe, 0, Math.PI * 2);
+          ctx.strokeStyle = PNP_COLORS[pnpDragging];
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function pnpEventToCamPx(e) {
+        const cv = $('pnpCanvas');
+        const rect = cv.getBoundingClientRect();
+        const ci = currentPnpCamIdx();
+        const c = calibs[ci];
+        return [
+          Math.max(4, Math.min(c.hw[1] - 4, ((e.clientX - rect.left) / rect.width) * c.hw[1])),
+          Math.max(4, Math.min(c.hw[0] - 4, ((e.clientY - rect.top) / rect.height) * c.hw[0])),
+        ];
+      }
+
+      $('pnpCanvas').addEventListener('pointerdown', e => {
+        const ci = currentPnpCamIdx();
+        const [u, v] = pnpEventToCamPx(e);
+        let hit = -1, bestD = 36;
+        pnpState[ci].uv.forEach(([pu, pv], k) => {
+          const d = Math.hypot(pu - u, pv - v);
+          if (d < bestD) { bestD = d; hit = k; }
+        });
+        if (hit >= 0) {
+          pnpActivePin = pnpDragging = hit;
+        } else {
+          pnpState[ci].uv[pnpActivePin] = [u, v];
+          pnpDragging = pnpActivePin;
+          pnpActivePin = (pnpActivePin + 1) % 4;
+        }
+        renderPnpTable();
+        drawPnpCanvas();
+      });
+      window.addEventListener('pointermove', e => {
+        if (pnpDragging < 0) return;
+        const ci = currentPnpCamIdx();
+        pnpState[ci].uv[pnpDragging] = pnpEventToCamPx(e);
+        renderPnpTable();
+        drawPnpCanvas();
+      });
+      window.addEventListener('pointerup', () => {
+        if (pnpDragging >= 0) {
+          pnpDragging = -1;
+          drawPnpCanvas();
+          void solveActivePnp();
+        }
+      });
+
+      $('btnPnpMode').onclick = () => {
+        pnpOpen = !pnpOpen;
+        $('pnpPanel').hidden = !pnpOpen;
+        $('btnPnpMode').setAttribute('aria-pressed', String(pnpOpen));
+        if (pnpOpen) {
+          if (activeCalibTarget === 'ground') {
+            activeCalibTarget = '0';
+            document.querySelectorAll('#calibTargetTabs button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.ctarget === '0')));
+            renderCalibControls();
+          }
+          if (!pnpState[currentPnpCamIdx()].seeded) seedPnpFromCurrentCam();
+          else { renderPnpTable(); drawPnpCanvas(); }
+        }
+      };
+      $('btnPnpSeed').onclick = () => seedPnpFromCurrentCam();
+      async function solveActivePnp() {
+        const ci = currentPnpCamIdx();
+        const gp = computeTunedGroundPlane();
+        const worldPts = pnpState[ci].world.map(([wx, wy, wz]) => [wx, wy, wz + gp[0] * wx + gp[1] * wy + gp[2]]);
+        $('calibStatus').textContent = `Đang giải PnP 6-DoF cho ${camNames[ci]}...`;
+        try {
+          const resp = await fetch('/api/calibrate_pnp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cam_index: ci, image_points: pnpState[ci].uv, world_points: worldPts }),
+          });
+          const res = await resp.json();
+          if (!resp.ok || !res.ok) throw new Error(res.error || `HTTP ${resp.status}`);
+          baseCalibs[ci] = res.camera_calib[ci];
+          manualCalib.cams[ci] = { ...manualCalib.cams[ci], pitch: 0, roll: 0, yaw: 0, dx: 0, dy: 0, dz: 0 };
+          applyManualCalibration(true);
+          renderCalibControls();
+          drawPnpCanvas();
+          $('calibStatus').textContent = `PnP ${camNames[ci]} OK · RMSE=${res.reproj_rmse_px}px (max ${res.max_err_px}px)`;
+        } catch (err) {
+          $('calibStatus').textContent = `Lỗi PnP: ${err.message}`;
+        }
+      }
+      $('btnPnpSolve').onclick = () => void solveActivePnp();
+
       function updateCameraColors(blend) {
         if (cameraImages.length === 0) return;
         const { pixels, gains } = sampleCameraColors(cameraImages, camMask);
-        gains.forEach((rgb, i) => cameraGains[i].lerp(gainTarget.fromArray(rgb), blend));
+        gains.forEach((rgb, i) => autoGains[i].lerp(gainTarget.fromArray(rgb), blend));
+        syncComposedGains();
         bowlSeams.sample(pixels, cameraGains, blend < 1, mainStage);
         colorUpdatedAt = performance.now();
       }
@@ -2653,18 +3368,15 @@
         pause(false);
         activeClip = clip;
         activeSurround = clip.surround;
-        calibs = activeSurround.camera_calib;
+        baseCalibs = JSON.parse(JSON.stringify(activeSurround.camera_calib));
+        trueMatCalibs = JSON.parse(JSON.stringify(activeSurround.camera_calib));
         const gz = activeSurround.ground_z ?? 0.025;
-        const gp = activeSurround.ground_plane || [0.0, 0.0, gz];
+        baseGroundPlane = [...(activeSurround.ground_plane || [0.0, 0.0, gz])];
+        trueMatGP = [...baseGroundPlane];
+        applyManualCalibration(false);
         for (const st of stages) {
-          updateCamUniforms(st.bowlMat.uniforms, calibs);
-          updateCamUniforms(st.temporalGround.warpMat.uniforms, calibs);
-          updateCamUniforms(st.wide2D.mat.uniforms, calibs);
           st.temporalGround.warpMat.uniforms.uGroundZ.value = gz;
           st.wide2D.mat.uniforms.uGroundZ.value = gz;
-          st.bowlMat.uniforms.uGroundPlane.value.set(...gp);
-          st.temporalGround.warpMat.uniforms.uGroundPlane.value.set(...gp);
-          st.wide2D.mat.uniforms.uGroundPlane.value.set(...gp);
           st.guideGroup.position.y = gz + 0.02;
         }
         const bowlParams = bowlGeo.getAttribute('aBowlParam');
@@ -3389,9 +4101,10 @@
 
       function prepareCameraFrame(frame, preview) {
         const present = meta.frames[frame].images_present;
+        const wParam = (preview && !aiEnabled) ? `&w=${PLAYBACK_TEXTURE_WIDTH}` : '';
         const cameras = Promise.all(present.map(async (yes, cam) => {
-          const image = yes ? await loadImage(`/api/image?index=${frame}&cam=${cam}`) : null;
-          return { image, bitmap: preview && !aiEnabled ? await playbackBitmap(image) : null };
+          const image = yes ? await loadImage(`/api/image?index=${frame}&cam=${cam}${wParam}`) : null;
+          return { image, bitmap: null };
         }));
         const url = rightProjectionUrl(frame, present);
         const projected = url ? { url, image: undefined } : null;
@@ -3637,11 +4350,13 @@
               bitmap?.close();
               return image;
             }));
+            if (showCalibGrid) bakeVirtualMatsIntoCameras();
             cameraImages.forEach((img, c) => {
               if (img) {
                 miniImgs[c].src = img.src;
               } else miniImgs[c].removeAttribute('src');
             });
+            if (pnpOpen) drawPnpCanvas();
             const mask = updateCameraMask();
             void refreshRightImage(prepared.projected);
             const dx = row.odom_from_prev?.[0] || 0;
@@ -3701,8 +4416,7 @@
         $('play').textContent = 'Phát';
         if (seed) {
           if (wasPlaying) {
-            setCameraTextures(cameraImages);
-            updateCameraColors(1);
+            void loadFrame(current);
           }
           requestForeground();
           void seedGround();
@@ -3977,8 +4691,18 @@
         updateProjectedLabels(stage);
       }
 
+      let fpsFrames = 0, fpsLastMs = performance.now();
       function animate(now) {
         requestAnimationFrame(animate);
+        fpsFrames++;
+        const dtFps = now - fpsLastMs;
+        if (dtFps >= 500) {
+          const fps = Math.round((fpsFrames * 1000) / dtFps);
+          const el = $('metaFps');
+          if (el) el.textContent = `3D: ${fps} FPS · Video: 10 Hz`;
+          fpsFrames = 0;
+          fpsLastMs = now;
+        }
         const tSec = now * 0.001;
         if (camAnim) {
           const t = Math.min(1, (now - camAnim.t0) / 420);
