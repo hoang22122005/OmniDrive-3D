@@ -43,21 +43,21 @@ VF8_VEHICLE_SPEC = {
     "mirror_z_m": 1.029,
 }
 
-# Wide OEM 3D Bowl flat-floor ellipse keeping full adjacent lanes & speed bumps 100% flat (no funnel kink):
-#   rx_flat = 6.20m, ry_flat = 4.60m (curbs stay crisp & straight; walls only rise behind tall barriers)
-BOWL_FLAT_RX = 6.20
-BOWL_FLAT_RY = 4.60
-BOWL_PAD_X = 9.00
-BOWL_PAD_Y = 7.50
-BOWL_WALL_HEIGHT = 4.60
-BOWL_WALL_POWER = 2.15
-BOWL_FLAT_SPLIT = 0.56
-BOWL_SEAM_X_SHIFT = 0.35
-BOWL_SEAM_X_SCALE = 1.25
+# Corridor-aligned superellipse (p=3.0) flat road extending ~5m ahead/behind bumpers, followed by gentle tangent wall.
+BOWL_FLAT_RX = 7.20
+BOWL_FLAT_RY = 3.80
+BOWL_FLAT_POWER = 3.0
+BOWL_PAD_X = 8.00
+BOWL_PAD_Y = 6.50
+BOWL_WALL_HEIGHT = 3.20
+BOWL_WALL_POWER = 2.2
+BOWL_FLAT_SPLIT = 0.52
+BOWL_SEAM_X_SHIFT = 1.00
+BOWL_SEAM_X_SCALE = 1.65
 BOWL_BASE_RX = BOWL_FLAT_RX
 BOWL_BASE_RY = BOWL_FLAT_RY
 BOWL_MIN_RX = 3.40
-BOWL_MIN_RY = 2.10
+BOWL_MIN_RY = 2.15
 BOWL_OUTER_PAD_X = BOWL_PAD_X
 BOWL_OUTER_PAD_Y = BOWL_PAD_Y
 
@@ -90,8 +90,8 @@ def export_vehicle_spec(rig, ground_plane=None):
         # If this is a non-VF8 / synthetic rig with significantly different camera span, adapt bounds automatically
         if abs(cam_span_x - 4.825) > 0.25 or abs(cam_span_y - 1.940) > 0.25:
             x0, x1 = float(pos["rear"][0]), float(pos["front"][0])
-            hw = max(0.75, 0.5 * cam_span_y)
-            length = max(2.5, x1 - x0)
+            hw = max(0.85, 0.5 * cam_span_y)
+            length = max(3.8, x1 - x0)
             wb = round(length * 0.62, 3)
             xc = 0.5 * (x0 + x1)
             spec.update({
@@ -137,7 +137,7 @@ def estimate_valid_circles(rig, manifest_rows, raw_root):
     valid_rows = [r for r in manifest_rows if all(img is not None for img in r.get("images", []))]
     if not valid_rows:
         return rig
-    sel = valid_rows[::max(1, len(valid_rows) // 8)][:8]
+    sel = valid_rows[::max(1, len(valid_rows) // 32)][:32]
     updated = copy.deepcopy(rig)
     for ci, cam in enumerate(updated["cameras"]):
         if cam.get("model") != "kb4" or "valid_circle" in cam:
@@ -179,6 +179,61 @@ def estimate_valid_circles(rig, manifest_rows, raw_root):
         r_clean = max(float(best_r) - 24.0, 0.45 * min(w, h))
         cam["valid_circle"] = [round(cx, 2), round(cy, 2), round(r_clean, 2)]
     return updated
+
+
+def fit_lidar_road_plane(rig, rows, raw_root):
+    """Offline fit from spatially balanced raw returns, with separate validation scans."""
+    from omnishield.data.phenikaa import load_lidar
+
+    scans = [row for row in rows if row.get("lidar")]
+    if any(str(row["lidar"]).lower().endswith(".laz") for row in scans):
+        try:
+            from laspy import LazBackend
+        except ImportError:
+            return None
+        if not LazBackend.detect_available():
+            return None
+    if len(scans) < 4:
+        return None
+    ground = float(rig.get("ground_height_m", 0.0))
+    train, check = [], []
+    for i, idx in enumerate(np.linspace(0, len(scans) - 1, min(20, len(scans)), dtype=int)):
+        try:
+            points, _ = load_lidar(raw_root, scans[idx], rig)
+        except (OSError, ImportError):
+            continue
+        x, y, z = points.T
+        road = points[(np.abs(x) < 8) & (np.abs(y) < 2) & (np.abs(z - ground) < 0.25)
+                      & ((np.abs(x) > 2.5) | (np.abs(y) > 1.15))]
+        if len(road) < 40:
+            continue
+        # One median per half-metre cell avoids overweighting dense near-field returns.
+        cells = np.floor(road[:, :2] * 2).astype(int)
+        ids = cells[:, 0] * 16 + cells[:, 1]
+        order = np.argsort(ids)
+        groups = np.split(road[order], np.flatnonzero(np.diff(ids[order])) + 1)
+        (check if i % 4 == 0 else train).extend(np.median(g, axis=0) for g in groups if len(g) >= 3)
+    if min(len(train), len(check)) < 40:
+        return None
+    xyz = np.asarray(train)
+    X = np.column_stack((xyz[:, :2], np.ones(len(xyz))))
+    if np.linalg.matrix_rank(X) < 3:
+        return None
+    weights = np.ones(len(xyz))
+    for _ in range(8):
+        coef = np.linalg.lstsq(X * weights[:, None], xyz[:, 2] * weights, rcond=None)[0]
+        weights = np.sqrt(0.025 / np.maximum(np.abs(xyz[:, 2] - X @ coef), 0.025))
+    if np.max(np.abs(coef[:2])) > 0.035 or abs(coef[2] - ground) > 0.12:
+        return None
+    hold = np.asarray(check)
+    residual = np.abs(hold[:, 2] - hold[:, :2] @ coef[:2] - coef[2])
+    if np.median(residual) > np.median(np.abs(hold[:, 2] - ground)) or np.median(residual) > 0.05:
+        return None
+    return np.round(coef, 6).tolist(), {
+        "source": "raw_lidar", "validation_cells": len(check),
+        "median_abs_cm": round(100 * float(np.median(residual)), 2),
+        "p90_abs_cm": round(100 * float(np.percentile(residual, 90)), 2),
+    }
 
 
 def estimate_road_plane(rig, manifest_rows, load_targets_fn, sample_path_fn, prepared_root, config, depth_centers):
@@ -240,11 +295,15 @@ def estimate_road_plane(rig, manifest_rows, load_targets_fn, sample_path_fn, pre
     return [round(a, 6), round(b, 6), round(c0, 5)], per_cam_cm
 
 
+def _superellipse_radius(ca, sa, rx, ry, p=BOWL_FLAT_POWER):
+    return np.power(np.power(np.abs(ca) / rx, p) + np.power(np.abs(sa) / ry, p), -1.0 / p)
+
+
 def bowl_base_radii(angles):
     """Return baseline flat-to-wall inflection radius r_base(theta) keeping road lanes flat."""
     ca = np.cos(angles)
     sa = np.sin(angles)
-    return 1.0 / np.hypot(ca / BOWL_BASE_RX, sa / BOWL_BASE_RY)
+    return _superellipse_radius(ca, sa, BOWL_BASE_RX, BOWL_BASE_RY)
 
 
 def bowl_min_radii(angles):
@@ -254,11 +313,11 @@ def bowl_min_radii(angles):
     return 1.0 / np.hypot(ca / BOWL_MIN_RX, sa / BOWL_MIN_RY)
 
 
-def build_adaptive_bowl_template(ground_z=0.0, n_rings=56, n_segs=128):
-    """Build closed 360-deg parametric Stadium-Bowl mesh (zero open rectangular corners)."""
-    # Dense inner floor rings (0..BOWL_FLAT_SPLIT) + smooth wall rings (BOWL_FLAT_SPLIT..1.0)
-    t_floor = np.linspace(0.0, BOWL_FLAT_SPLIT, 28, endpoint=False, dtype=np.float32)
-    t_wall = np.linspace(BOWL_FLAT_SPLIT, 1.0, n_rings - 28, dtype=np.float32)
+def build_adaptive_bowl_template(ground_z=0.0, n_rings=84, n_segs=160):
+    """Build closed 360-deg parametric Stadium-Bowl mesh resolving 2.5D curb steps cleanly."""
+    # Dense inner floor rings (0..BOWL_FLAT_SPLIT, <10cm radial step) + smooth wall rings
+    t_floor = np.linspace(0.0, BOWL_FLAT_SPLIT, 56, endpoint=False, dtype=np.float32)
+    t_wall = np.linspace(BOWL_FLAT_SPLIT, 1.0, n_rings - 56, dtype=np.float32)
     ts = np.concatenate([t_floor, t_wall])
     angles = np.linspace(0.0, 2.0 * np.pi, n_segs, endpoint=False, dtype=np.float32)
     tt, aa = np.meshgrid(ts, angles, indexing="ij")
@@ -278,6 +337,140 @@ def build_adaptive_bowl_template(ground_z=0.0, n_rings=56, n_segs=128):
     idx_arr = np.asarray(indices, dtype="<u4")
     header = np.asarray([verts.shape[0], idx_arr.shape[0]], dtype="<u4")
     return header.tobytes() + verts.tobytes() + idx_arr.tobytes()
+
+
+def verify_bowl_mesh_integrity(
+    ground_plane=(0.0, 0.0, 0.0), wall_ranges=None, polar_height=None,
+    left_poly=(0.0, 0.0, 2.25), right_poly=(0.0, 0.0, -2.25),
+    adapt_strength=1.0, n_rings=84, n_segs=160,
+):
+    """Verify 0 inverted/degenerate triangles and strict radial monotonicity on the adaptive bowl."""
+    pa, pb, pc = [float(v) for v in ground_plane]
+    t_floor = np.linspace(0.0, BOWL_FLAT_SPLIT, 56, endpoint=False, dtype=np.float64)
+    t_wall = np.linspace(BOWL_FLAT_SPLIT, 1.0, n_rings - 56, dtype=np.float64)
+    ts = np.concatenate([t_floor, t_wall])
+    angles = np.linspace(0.0, 2.0 * np.pi, n_segs, endpoint=False, dtype=np.float64)
+    tt, aa = np.meshgrid(ts, angles, indexing="ij")
+    ca, sa = np.cos(aa), np.sin(aa)
+
+    smooth_sa = np.clip((sa + 0.30) / 0.60, 0.0, 1.0)
+    smooth_sa = smooth_sa * smooth_sa * (3.0 - 2.0 * smooth_sa)
+    side_offset = (-right_poly[2]) * (1.0 - smooth_sa) + left_poly[2] * smooth_sa - 2.25
+    ry = BOWL_FLAT_RY + np.clip(side_offset, -0.35, 0.55)
+    r_flat_base = _superellipse_radius(ca, sa, BOWL_FLAT_RX, ry)
+    r_flat = r_flat_base.copy()
+    depth_wall = np.zeros_like(aa)
+
+    if wall_ranges is not None:
+        wr = np.asarray(wall_ranges, dtype=np.float64)
+        sec_f = np.mod(angles * (len(wr) / (2.0 * np.pi)) - 0.5, len(wr))
+        s0 = np.floor(sec_f).astype(np.intp) % len(wr)
+        s1 = (s0 + 1) % len(wr)
+        w = sec_f - np.floor(sec_f)
+        a_v, b_v = wr[s0], wr[s1]
+        va, vb = (a_v >= 0.01).astype(np.float64), (b_v >= 0.01).astype(np.float64)
+        sup = va * (1.0 - w) + vb * w
+        meas = (a_v * (1.0 - w) + b_v * w) / np.maximum(sup, 1e-4)
+        out_ego = 1.0 / np.maximum(np.abs(ca[0]) / 2.85, np.abs(sa[0]) / 1.55)
+        sw_t = np.clip((np.abs(sa[0]) - 0.20) / 0.45, 0.0, 1.0)
+        sw_t = sw_t * sw_t * (3.0 - 2.0 * sw_t)
+        side_w = 0.35 + 0.65 * sw_t
+        sup_t = np.clip((sup - 0.20) / 0.65, 0.0, 1.0)
+        sup_t = sup_t * sup_t * (3.0 - 2.0 * sup_t)
+        dw_t = np.clip((meas - (r_flat_base[0] - 0.15)) / 1.05, 0.0, 1.0)
+        dw_t = dw_t * dw_t * (3.0 - 2.0 * dw_t)
+        depth_wall_1d = sup_t * (1.0 - dw_t) * side_w * adapt_strength
+        change = np.clip(np.maximum(out_ego, meas - 0.04) - r_flat_base[0], -0.75, 0.25)
+        r_flat = r_flat_base + depth_wall_1d[None, :] * change[None, :]
+        depth_wall = np.broadcast_to(depth_wall_1d[None, :], aa.shape)
+
+    r_pad = 1.0 / np.hypot(ca / BOWL_PAD_X, sa / BOWL_PAD_Y)
+    wall_u = np.where(tt <= BOWL_FLAT_SPLIT, 0.0, (tt - BOWL_FLAT_SPLIT) / (1.0 - BOWL_FLAT_SPLIT))
+    r_span = np.maximum((r_flat_base + r_pad) - r_flat, 0.5)
+    r_floor = 0.05 + (r_flat - 0.05) * (tt / BOWL_FLAT_SPLIT)
+    r_wall = r_flat + r_span * (wall_u * (1.0 - depth_wall * 0.45) + (wall_u ** 1.38) * (depth_wall * 0.45))
+    r = np.where(tt <= BOWL_FLAT_SPLIT, r_floor, r_wall)
+
+    radial_monotonic = bool(np.all(np.diff(r, axis=0) > 1e-6))
+    x = r * ca
+    y = r * sa
+    road_z = pa * x + pb * y + pc
+    wall_z = np.where(
+        wall_u > 0.0,
+        (BOWL_WALL_HEIGHT * (wall_u ** BOWL_WALL_POWER)) * (1.0 - depth_wall * 0.45)
+        + (BOWL_WALL_HEIGHT * (wall_u ** 1.25)) * (depth_wall * 0.45),
+        0.0,
+    )
+    curb_z = np.zeros_like(x)
+    if polar_height is not None:
+        ph = np.asarray(polar_height, dtype=np.float64)
+        sf = np.mod(aa, 2.0 * np.pi) * (ph.shape[0] / (2.0 * np.pi)) - 0.5
+        s0 = np.floor(sf).astype(np.intp) % ph.shape[0]
+        s1 = (s0 + 1) % ph.shape[0]
+        ws = sf - np.floor(sf)
+        rf = np.clip((r - POLAR_R_MIN) / (POLAR_R_MAX - POLAR_R_MIN) * ph.shape[1] - 0.5, 0.0, ph.shape[1] - 1.0)
+        r0 = np.floor(rf).astype(np.intp)
+        r1 = np.minimum(r0 + 1, ph.shape[1] - 1)
+        wr_f = rf - r0
+        h00, h10, h01, h11 = ph[s0, r0], ph[s0, r1], ph[s1, r0], ph[s1, r1]
+        interp_h = (h00 * (1.0 - wr_f) + h10 * wr_f) * (1.0 - ws) + (h01 * (1.0 - wr_f) + h11 * wr_f) * ws
+        fade_in = np.clip((r - 1.15) / 0.30, 0.0, 1.0)
+        fade_in = fade_in * fade_in * (3.0 - 2.0 * fade_in)
+        fade_out = np.clip((wall_u - 0.05) / 0.43, 0.0, 1.0)
+        fade_out = fade_out * fade_out * (3.0 - 2.0 * fade_out)
+        curb_z = interp_h * fade_in * adapt_strength * (1.0 - fade_out)
+
+    z = road_z + wall_z + curb_z
+    pts = np.stack([-y, z, -x], axis=-1)
+    p00, p01 = pts[:-1, :], np.roll(pts[:-1, :], -1, axis=1)
+    p10, p11 = pts[1:, :], np.roll(pts[1:, :], -1, axis=1)
+    n1 = np.cross(p11 - p00, p01 - p00)
+    n2 = np.cross(p10 - p00, p11 - p00)
+    normals = np.concatenate([n1.reshape(-1, 3), n2.reshape(-1, 3)], axis=0)
+    areas = 0.5 * np.linalg.norm(normals, axis=1)
+    # Upward (+Y in Three.js) or inward radial component must be positive across all triangles.
+    centers_3d = np.concatenate([((p00 + p01 + p11) / 3.0).reshape(-1, 3), ((p00 + p11 + p10) / 3.0).reshape(-1, 3)], axis=0)
+    inward = np.stack([-centers_3d[:, 0], np.ones_like(centers_3d[:, 1]), -centers_3d[:, 2]], axis=-1)
+    dots = (normals * inward).sum(axis=1)
+    return {
+        "triangles": int(len(areas)),
+        "degenerate_triangles": int((areas <= 1e-8).sum()),
+        "inverted_triangles": int((dots <= 0.0).sum()),
+        "radial_monotonic": radial_monotonic,
+    }
+
+
+def measure_near_field_coverage(rig, ground_plane=(0.0, 0.0, 0.0), band_m=0.25, step_m=0.10, min_cos_near=-0.26, bottom_crop_px=2.0):
+    """Audit ground visibility in the near-field perimeter band around the chassis (optical vs shader)."""
+    pa, pb, pc = [float(v) for v in ground_plane]
+    x0, x1, y0, y1 = physical_ego_bounds(rig)
+    xs = np.arange(x0 - band_m, x1 + band_m + 1e-6, step_m)
+    ys = np.arange(y0 - band_m, y1 + band_m + 1e-6, step_m)
+    gx, gy = np.meshgrid(xs, ys)
+    in_band = (
+        ~((gx >= x0) & (gx <= x1) & (gy >= y0) & (gy <= y1))
+        & ((gx >= x0 - band_m) & (gx <= x1 + band_m) & (gy >= y0 - band_m) & (gy <= y1 + band_m))
+    )
+    pts = np.stack([gx[in_band], gy[in_band], pa * gx[in_band] + pb * gy[in_band] + pc], axis=-1)
+    optical_any = np.zeros(len(pts), dtype=bool)
+    shader_any = np.zeros(len(pts), dtype=bool)
+    for cam in rig["cameras"]:
+        sh, sw = cam["image_hw"]
+        uv, _, valid = project(pts, cam, (sh, sw))
+        in_crop = valid & (uv[:, 1] < sh - 0.5 - bottom_crop_px)
+        optical_any |= in_crop
+        t_ec = np.linalg.inv(rigid_matrix(cam["T_cam_from_ego"], cam["slot"]))
+        delta = pts[:, :2] - t_ec[:2, 3]
+        fwd2 = t_ec[:2, 2] / max(float(np.linalg.norm(t_ec[:2, 2])), 1e-5)
+        cos_dir = (delta @ fwd2) / np.maximum(np.linalg.norm(delta, axis=1), 1e-4)
+        shader_any |= in_crop & (cos_dir > min_cos_near)
+    return {
+        "total_points": int(len(pts)),
+        "optical_covered": int(optical_any.sum()),
+        "shader_covered": int(shader_any.sum()),
+        "software_filtered": int((optical_any & ~shader_any).sum()),
+        "physical_blind": int((~optical_any).sum()),
+    }
 
 
 def _gaussian_blur_2d(tensor_bchw, ksize, sigma):
@@ -309,9 +502,19 @@ def _euler_xyz_torch(rpy):
 
 
 def calibrate_rig_extrinsics_photometric(
-    rig, manifest_rows, raw_root, load_targets_fn, sample_path_fn, prepared_root, config, depth_centers, ground_z, device, ground_plane=None
+    rig, manifest_rows, raw_root, load_targets_fn=None, sample_path_fn=None, prepared_root=None,
+    config=None, depth_centers=None, ground_z=0.0, device=None, ground_plane=None, poses=None,
 ):
-    """Two-stage road-plane 6-DoF BA: global side-height sweep + constrained Charbonnier edge+chroma refinement."""
+    """Multi-Scale Stratified ZNCC + Joint Ground-Plane 6-DoF BA (LiDAR-assisted or Targetless Camera-Only):
+    1) Stratifies frame selection across drives (e.g. City + Urban) & front/rear road-marking texture.
+    2) Uses illumination-invariant 1-ZNCC on high-pass luma, yellow-chroma, and gradient magnitude across
+       curb-safe flat-asphalt overlap zones, with per-corner top-75% frame trimming to reject dynamic objects
+       (motorbikes/cars) without requiring LiDAR.
+    3) In camera-only mode (no LiDAR road plane), jointly estimates road-plane tilt (pa, pb) within +-0.7 deg.
+    4) Runs 3-stage Coarse->Medium->Fine pyramid (float16 VRAM-safe) with held-out validation gain gate.
+    """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rig = estimate_valid_circles(rig, manifest_rows, raw_root)
     cams = rig["cameras"]
     if len(cams) != 4 or any(c.get("model") != "kb4" for c in cams):
@@ -322,37 +525,61 @@ def calibrate_rig_extrinsics_photometric(
         return copy.deepcopy(rig), [0.0] * len(cams)
 
     pa, pb, pc = [float(v) for v in (ground_plane if ground_plane is not None else (0.0, 0.0, float(ground_z)))]
+    has_lidar_targets = (
+        load_targets_fn is not None and sample_path_fn is not None and prepared_root is not None
+        and config is not None and depth_centers is not None
+    )
+    optimize_gp = (not has_lidar_targets) and (ground_plane is None or (abs(pa) < 1e-6 and abs(pb) < 1e-6))
 
-    # Balanced 4-corner road-overlap grid strictly on flat asphalt
-    zone_pts = []
-    for xr, yr in (
-        ((2.2, 5.4), (0.95, 2.05)),
-        ((2.2, 5.4), (-2.55, -0.95)),
-        ((-5.4, -2.2), (0.95, 2.05)),
-        ((-5.4, -2.2), (-2.55, -0.95)),
-    ):
-        xs_z = np.linspace(xr[0], xr[1], 32)
+    # Prefer straight, flat-road frames (low yaw rate) when odometry poses are available
+    straight_mask = [True] * len(valid_rows)
+    if poses is not None and len(poses) == len(manifest_rows):
+        row_to_idx = {id(r): i for i, r in enumerate(manifest_rows)}
+        for vi, r in enumerate(valid_rows):
+            mi = row_to_idx.get(id(r), -1)
+            if mi > 0 and manifest_rows[mi - 1].get("drive_id") == r.get("drive_id"):
+                t_rel = np.linalg.inv(poses[mi]) @ poses[mi - 1]
+                dyaw = abs(float(np.arctan2(t_rel[1, 0], t_rel[0, 0])))
+                if dyaw > 0.025:
+                    straight_mask[vi] = False
+        if sum(straight_mask) < max(8, len(valid_rows) // 4):
+            straight_mask = [True] * len(valid_rows)
+
+    # Curb-safe flat-asphalt overlap zones for all 4 corners (FL, FR, RL, RR)
+    zone_defs = (
+        ((2.2, 5.2), (0.95, 1.72), 0, 2),
+        ((2.2, 5.2), (-2.20, -0.95), 0, 3),
+        ((-5.2, -2.2), (0.95, 1.72), 1, 2),
+        ((-5.2, -2.2), (-2.20, -0.95), 1, 3),
+    )
+    zone_pts, zone_slices = [], []
+    z_off = 0
+    for xr, yr, ca, cb in zone_defs:
+        xs_z = np.linspace(xr[0], xr[1], 36)
         ys_z = np.linspace(yr[0], yr[1], 24)
         gx_z, gy_z = np.meshgrid(xs_z, ys_z)
-        zone_pts.append(np.stack([gx_z.ravel(), gy_z.ravel()], axis=1))
+        pts_z = np.stack([gx_z.ravel(), gy_z.ravel()], axis=1)
+        zone_pts.append(pts_z)
+        zone_slices.append((z_off, z_off + len(pts_z), ca, cb))
+        z_off += len(pts_z)
     pts_xy = np.concatenate(zone_pts, axis=0).astype(np.float32)
     n_pts = len(pts_xy)
 
-    # Texture-stratified frame selection across Front + Rear road strips so even/odd val split is balanced
+    # Drive-stratified & texture-scored frame selection across Front + Rear road strips
     def _strip_uv(cam_i, xr):
-        xs_s = np.linspace(xr[0], xr[1], 32)
-        ys_s = np.linspace(-2.0, 1.8, 24)
+        xs_s = np.linspace(xr[0], xr[1], 28)
+        ys_s = np.linspace(-2.1, 1.65, 18)
         gx_s, gy_s = np.meshgrid(xs_s, ys_s)
         pts_s = np.stack([gx_s.ravel(), gy_s.ravel(), (pa * gx_s + pb * gy_s + pc).ravel()], axis=1)
         sh_s, sw_s = cams[cam_i]["image_hw"]
         uv_s, _, _ = project(pts_s, cams[cam_i], (sh_s, sw_s))
         return (
-            np.clip(uv_s[:, 0] / max(sw_s, 1), 0.0, 0.999).reshape(24, 32),
-            np.clip(uv_s[:, 1] / max(sh_s, 1), 0.0, 0.999).reshape(24, 32),
+            np.clip(uv_s[:, 0] / max(sw_s, 1), 0.0, 0.999).reshape(18, 28),
+            np.clip(uv_s[:, 1] / max(sh_s, 1), 0.0, 0.999).reshape(18, 28),
         )
 
-    u0n, v0n = _strip_uv(0, (2.4, 5.4))
-    u1n, v1n = _strip_uv(1, (-5.4, -2.4))
+    u0n, v0n = _strip_uv(0, (2.3, 5.2))
+    u1n, v1n = _strip_uv(1, (-5.2, -2.3))
 
     def score_frame(row):
         tot = 0.0
@@ -361,7 +588,7 @@ def calibrate_rig_extrinsics_photometric(
             if not p_cam.is_file():
                 continue
             with Image.open(p_cam) as pil_im:
-                pil_im.draft("RGB", (960, 540))
+                pil_im.draft("RGB", (640, 360))
                 arr = np.asarray(pil_im.convert("RGB"), dtype=np.float32)
             ah, aw = arr.shape[:2]
             ui = np.clip((un * aw).astype(np.int32), 0, aw - 1)
@@ -369,52 +596,91 @@ def calibrate_rig_extrinsics_photometric(
             rgb_s = arr[vi, ui]
             lum_s = rgb_s.mean(axis=2)
             yel_s = rgb_s[:, :, 0] - rgb_s[:, :, 2]
-            tot += float(np.mean(np.abs(np.diff(lum_s, axis=1)) + 2.5 * np.abs(np.diff(yel_s, axis=1))))
+            tot += float(
+                np.mean(np.abs(np.diff(lum_s, axis=1)))
+                + np.mean(np.abs(np.diff(lum_s, axis=0)))
+                + 2.0 * np.mean(np.abs(np.diff(yel_s, axis=1)))
+            )
         return tot
 
-    if len(valid_rows) <= 16:
-        scored_sel = sorted([(score_frame(r), i) for i, r in enumerate(valid_rows)], reverse=True)
-        selected = [valid_rows[i] for _, i in scored_sel]
+    target_frames = 24
+    if len(valid_rows) <= target_frames:
+        selected = list(valid_rows)
     else:
-        scan_step = max(1, len(valid_rows) // 135)
-        tx_scores = sorted([(score_frame(valid_rows[idx]), idx) for idx in range(0, len(valid_rows), scan_step)], reverse=True)
-        chosen = []
-        for sc_val, idx in tx_scores:
-            if len(chosen) < 10 and all(abs(idx - prev_idx) >= 2 for _, prev_idx in chosen):
-                chosen.append((sc_val, idx))
-        for idx in np.linspace(0, len(valid_rows) - 1, 6, dtype=int):
-            if all(abs(int(idx) - prev_idx) >= 2 for _, prev_idx in chosen):
-                chosen.append((score_frame(valid_rows[int(idx)]), int(idx)))
-        # Sort by descending texture score so even/odd train/val interleaving shares texture equally
-        chosen.sort(reverse=True)
-        selected = [valid_rows[idx] for _, idx in chosen[:16]]
+        by_drive = {}
+        for vi, r in enumerate(valid_rows):
+            if straight_mask[vi]:
+                by_drive.setdefault(str(r.get("drive_id", "default")), []).append(r)
+        if not by_drive:
+            by_drive["default"] = list(valid_rows)
+        per_drive = max(4, target_frames // max(1, len(by_drive)))
+        selected = []
+        for drows in by_drive.values():
+            step = max(1, len(drows) // 60)
+            scored = sorted([(score_frame(drows[i]), i) for i in range(0, len(drows), step)], reverse=True)
+            chosen = []
+            for sc_val, idx in scored:
+                if len(chosen) < max(2, per_drive - 2) and all(abs(idx - prev_i) >= 3 for _, prev_i in chosen):
+                    chosen.append((sc_val, idx))
+            for idx in np.linspace(0, len(drows) - 1, 4, dtype=int):
+                if len(chosen) < per_drive and all(abs(int(idx) - prev_i) >= 3 for _, prev_i in chosen):
+                    chosen.append((score_frame(drows[int(idx)]), int(idx)))
+            chosen.sort(key=lambda x: x[1])
+            selected.extend(drows[idx] for _, idx in chosen[:per_drive])
 
-    calibs = export_camera_calib(rig)
-    model_hw = tuple(config["image_hw"])
-    dec = FeedForward3DGSDecoder(rig, calibs, model_hw, feature_stride=4, ground_z=pc)
+    dec = None
+    if has_lidar_targets:
+        calibs = export_camera_calib(rig)
+        model_hw = tuple(config["image_hw"])
+        dec = FeedForward3DGSDecoder(rig, calibs, model_hw, feature_stride=4, ground_z=pc)
 
-    flat_masks, c_list, f_list = [], [], []
+    f_cnt = len(selected)
+    src_h, src_w = cams[0]["image_hw"]
+    w_cal = min(800, max(320, int(src_w)))
+    h_cal = min(450, max(180, int(round(w_cal * src_h / max(src_w, 1)))))
+    pyr_dtype = torch.float16 if device.type == "cuda" else torch.float32
+    imgs_coarse = torch.empty((f_cnt, 4, 4, h_cal, w_cal), dtype=pyr_dtype, device=device)
+    imgs_med = torch.empty((f_cnt, 4, 4, h_cal, w_cal), dtype=pyr_dtype, device=device)
+    imgs_fine = torch.empty((f_cnt, 4, 4, h_cal, w_cal), dtype=pyr_dtype, device=device)
+
+    flat_masks = []
     with torch.no_grad():
-        for fr in selected:
-            stgt = load_targets_fn(sample_path_fn(prepared_root, fr), config)
-            dbins = stgt.get("depth")
+        for fi, fr in enumerate(selected):
             elev = np.zeros((64, 80), dtype=bool)
-            if dbins is not None:
-                for ci in range(4):
-                    v = dec.ray_valid[ci] & (dbins[ci] >= 0) & (dbins[ci] < len(depth_centers))
-                    if not v.any():
-                        continue
-                    dm = depth_centers[np.clip(dbins[ci], 0, len(depth_centers) - 1)]
-                    v &= (dm > 0.4) & (dm < 11.0)
-                    if not v.any():
-                        continue
-                    pts = dec.origins[ci] + dec.rays_ego[ci][v] * dm[v, None]
-                    rz = pa * pts[:, 0] + pb * pts[:, 1] + pc
-                    hi = pts[pts[:, 2] > rz + 0.08]
-                    xi = ((hi[:, 0] + 6.0) / 0.15).astype(np.int32)
-                    yi = ((hi[:, 1] + 4.0) / 0.125).astype(np.int32)
-                    inb = (xi >= 0) & (xi < 80) & (yi >= 0) & (yi < 64)
-                    elev[yi[inb], xi[inb]] = True
+            if has_lidar_targets:
+                stgt = load_targets_fn(sample_path_fn(prepared_root, fr), config)
+                dbins = stgt.get("depth")
+                if dbins is not None:
+                    for ci in range(4):
+                        v = dec.ray_valid[ci] & (dbins[ci] >= 0) & (dbins[ci] < len(depth_centers))
+                        if not v.any():
+                            continue
+                        dm = depth_centers[np.clip(dbins[ci], 0, len(depth_centers) - 1)]
+                        v &= (dm > 0.4) & (dm < 11.0)
+                        if not v.any():
+                            continue
+                        pts = dec.origins[ci] + dec.rays_ego[ci][v] * dm[v, None]
+                        rz = pa * pts[:, 0] + pb * pts[:, 1] + pc
+                        hi = pts[pts[:, 2] > rz + 0.06]
+                        xi = ((hi[:, 0] + 6.0) / 0.15).astype(np.int32)
+                        yi = ((hi[:, 1] + 4.0) / 0.125).astype(np.int32)
+                        inb = (xi >= 0) & (xi < 80) & (yi >= 0) & (yi < 64)
+                        elev[yi[inb], xi[inb]] = True
+                sem = stgt.get("semantics")
+                occ = stgt.get("occupancy")
+                if sem is not None and occ is not None:
+                    dyn_bev = ((occ == 1) & (sem > 0)).any(axis=0)
+                    if dyn_bev.any():
+                        gx0, gx1 = float(config["grid"]["x"][0]), float(config["grid"]["x"][1])
+                        gy0, gy1 = float(config["grid"]["y"][0]), float(config["grid"]["y"][1])
+                        dyi, dxi = np.nonzero(dyn_bev)
+                        dxm = gx0 + (dxi + 0.5) / dyn_bev.shape[1] * (gx1 - gx0)
+                        dym = gy0 + (dyi + 0.5) / dyn_bev.shape[0] * (gy1 - gy0)
+                        xi_d = ((dxm + 6.0) / 0.15).astype(np.int32)
+                        yi_d = ((dym + 4.0) / 0.125).astype(np.int32)
+                        inb_d = (xi_d >= 0) & (xi_d < 80) & (yi_d >= 0) & (yi_d < 64)
+                        elev[yi_d[inb_d], xi_d[inb_d]] = True
+
             blocked = binary_dilation(elev, iterations=2)
             xi_p = np.clip(((pts_xy[:, 0] + 6.0) / 0.15).astype(np.int32), 0, 79)
             yi_p = np.clip(((pts_xy[:, 1] + 4.0) / 0.125).astype(np.int32), 0, 63)
@@ -423,24 +689,20 @@ def calibrate_rig_extrinsics_photometric(
             f_imgs = []
             for rel in fr["images"]:
                 with Image.open(child_path(raw_root, rel)) as pil_im:
-                    arr = np.asarray(pil_im.convert("RGB").resize((768, 432), Image.Resampling.BILINEAR), dtype=np.float32) / 255.0
+                    arr = np.asarray(pil_im.convert("RGB").resize((w_cal, h_cal), Image.Resampling.BILINEAR), dtype=np.float32) / 255.0
                 f_imgs.append(np.transpose(arr, (2, 0, 1)))
             flat = torch.from_numpy(np.stack(f_imgs, axis=0)).to(device)
             luma = 0.299 * flat[:, 0:1] + 0.587 * flat[:, 1:2] + 0.114 * flat[:, 2:3]
             yell = flat[:, 0:1] - flat[:, 2:3]
-            hp = (luma - _gaussian_blur_2d(luma, 17, 3.5)) * 5.0
-            hp_y = (yell - _gaussian_blur_2d(yell, 17, 3.5)) * 7.0
+            hp = (luma - _gaussian_blur_2d(luma, 19, 4.0)) * 6.0
+            hp_y = (yell - _gaussian_blur_2d(yell, 19, 4.0)) * 8.0
             gx = F.pad(hp[:, :, :, 1:] - hp[:, :, :, :-1], (0, 1, 0, 0))
             gy = F.pad(hp[:, :, 1:, :] - hp[:, :, :-1, :], (0, 0, 0, 1))
             grad = torch.sqrt(gx * gx + gy * gy + 1e-6)
             feat = torch.cat([hp, hp_y, luma, grad], dim=1)
-            c_list.append(_gaussian_blur_2d(feat, 11, 2.5))
-            f_list.append(_gaussian_blur_2d(feat, 5, 0.9))
-
-        imgs_coarse = torch.stack(c_list, dim=0)
-        imgs_fine = torch.stack(f_list, dim=0)
-        f_cnt = imgs_coarse.shape[0]
-        del c_list, f_list
+            imgs_coarse[fi] = _gaussian_blur_2d(feat, 17, 4.0).to(pyr_dtype)
+            imgs_med[fi] = _gaussian_blur_2d(feat, 9, 1.8).to(pyr_dtype)
+            imgs_fine[fi] = _gaussian_blur_2d(feat, 5, 0.85).to(pyr_dtype)
 
     with torch.enable_grad():
         torch.manual_seed(0)
@@ -451,7 +713,6 @@ def calibrate_rig_extrinsics_photometric(
             val_idx = train_idx
 
         pts_xy_t = torch.from_numpy(pts_xy).to(device)
-        pts3 = torch.cat([pts_xy_t, (pa * pts_xy_t[:, 0] + pb * pts_xy_t[:, 1] + pc)[:, None]], dim=-1)
         t_init = torch.stack([torch.from_numpy(rigid_matrix(c["T_cam_from_ego"], c["slot"]).astype(np.float32)) for c in cams]).to(device)
         t_ec_init = torch.linalg.inv(t_init)
         k_t = torch.stack([torch.tensor(c["K"], dtype=torch.float32) for c in cams]).to(device)
@@ -460,10 +721,12 @@ def calibrate_rig_extrinsics_photometric(
         vc_t = torch.tensor([c.get("valid_circle", [0.0, 0.0, -1.0]) for c in cams], dtype=torch.float32, device=device)
         max_th_t = torch.tensor([np.deg2rad(min(c["max_theta_deg"], 92.0)) for c in cams], dtype=torch.float32, device=device)
 
-        def loss_fn(pyr, frame_idx, rpy_val, dz_val, dxy_val):
+        def loss_fn(pyr, frame_idx, rpy_val, dz_val, dxy_val, gp_ab):
             pyr_sub = pyr[frame_idx]
             flat_sub = flat_t[frame_idx]
             sub_cnt = len(frame_idx)
+            pz = gp_ab[0] * pts_xy_t[:, 0] + gp_ab[1] * pts_xy_t[:, 1] + pc
+            pts3 = torch.cat([pts_xy_t, pz[:, None]], dim=-1)
             r_d = _euler_xyz_torch(rpy_val)
             dt_val = torch.cat([dxy_val, dz_val[:, None]], dim=-1)
             samples, valids = [], []
@@ -481,85 +744,127 @@ def calibrate_rig_extrinsics_photometric(
                 u = uv_p[:, 0] * km[0, 0] + uv_p[:, 1] * km[0, 1] + km[0, 2]
                 v = uv_p[:, 1] * km[1, 1] + km[1, 2]
                 h, w = hw_t[ci, 0], hw_t[ci, 1]
-                ok = (theta <= max_th_t[ci]) & (u >= 20) & (u < w - 20) & (v >= 20) & (v < h - 65)
+                ok = (theta <= max_th_t[ci]) & (u >= 20) & (u < w - 20) & (v >= 20) & (v < h - 20)
                 if vc_t[ci, 2] > 0:
                     ok = ok & (torch.hypot(u - vc_t[ci, 0], v - vc_t[ci, 1]) < vc_t[ci, 2] - 20.0)
                 grid = torch.stack([2.0 * (u + 0.5) / w - 1.0, 2.0 * (v + 0.5) / h - 1.0], dim=-1).view(1, 1, n_pts, 2).expand(sub_cnt, -1, -1, -1)
-                feat = F.grid_sample(pyr_sub[:, ci], grid, mode="bilinear", align_corners=False)
+                feat = F.grid_sample(pyr_sub[:, ci].float(), grid, mode="bilinear", align_corners=False)
                 samples.append(feat[:, :, 0, :])
                 valids.append(ok)
             pair_losses = []
-            for a, b in ((0, 2), (0, 3), (1, 2), (1, 3)):
-                m = flat_sub & (samples[a][:, 2] > 0.14) & (samples[b][:, 2] > 0.14) & (valids[a] & valids[b])[None, :]
-                if m.sum() < 40:
-                    continue
-                w_edge = (1.0 + 4.0 * torch.maximum(samples[a][:, 3][m], samples[b][:, 3][m])).detach()
-                d_hp = torch.sqrt((samples[a][:, 0][m] - samples[b][:, 0][m]) ** 2 + 0.01) - 0.1
-                d_hy = torch.sqrt((samples[a][:, 1][m] - samples[b][:, 1][m]) ** 2 + 0.01) - 0.1
-                pair_losses.append((w_edge * (d_hp + 2.5 * d_hy)).sum() / w_edge.sum())
+            for s0, s1, ca, cb in zone_slices:
+                ok_p = (valids[ca][s0:s1] & valids[cb][s0:s1])[None, :]
+                fa = samples[ca][:, :, s0:s1]
+                fb = samples[cb][:, :, s0:s1]
+                m = flat_sub[:, s0:s1] & ok_p & (fa[:, 2] > 0.14) & (fb[:, 2] > 0.14)
+                z_losses = []
+                for fi in range(sub_cnt):
+                    mf = m[fi]
+                    if mf.sum() < 60:
+                        continue
+                    ha, hb = fa[fi, 0][mf], fb[fi, 0][mf]
+                    ya, yb = fa[fi, 1][mf], fb[fi, 1][mf]
+                    ga, gb = fa[fi, 3][mf], fb[fi, 3][mf]
+                    ha0, hb0 = ha - ha.mean(), hb - hb.mean()
+                    ya0, yb0 = ya - ya.mean(), yb - yb.mean()
+                    ga0, gb0 = ga - ga.mean(), gb - gb.mean()
+                    c_hp = (ha0 * hb0).mean() / (torch.sqrt((ha0 * ha0).mean() + 1e-4) * torch.sqrt((hb0 * hb0).mean() + 1e-4))
+                    c_hy = (ya0 * yb0).mean() / (torch.sqrt((ya0 * ya0).mean() + 1e-4) * torch.sqrt((yb0 * yb0).mean() + 1e-4))
+                    c_gr = (ga0 * gb0).mean() / (torch.sqrt((ga0 * ga0).mean() + 1e-4) * torch.sqrt((gb0 * gb0).mean() + 1e-4))
+                    z_losses.append(0.50 * (1.0 - c_hp) + 0.30 * (1.0 - c_hy) + 0.20 * (1.0 - c_gr))
+                if z_losses:
+                    st = torch.stack(z_losses)
+                    k_keep = max(1, int(len(z_losses) * (0.75 if not has_lidar_targets else 0.90)))
+                    vals, _ = torch.topk(st, k_keep, largest=False)
+                    pair_losses.append(vals.mean())
             if not pair_losses:
                 return (rpy_val * 0.0).sum()
             return sum(pair_losses) / len(pair_losses)
 
-        # Stage 1: Global 1D sweep over symmetric side-mirror height shift (zero local minima!)
+        gp_init = torch.tensor([pa, pb], dtype=torch.float32, device=device)
         with torch.no_grad():
             zero_r = torch.zeros((4, 3), device=device)
             zero_dz = torch.zeros(4, device=device)
             zero_xy = torch.zeros((4, 2), device=device)
-            val_before = float(loss_fn(imgs_fine, val_idx, zero_r, zero_dz, zero_xy).item())
+            val_before = float(loss_fn(imgs_fine, val_idx, zero_r, zero_dz, zero_xy, gp_init).item())
             best_sdz, best_s_loss = 0.0, float("inf")
-            for sdz in (-0.02, 0.0, 0.02, 0.04, 0.06, 0.07, 0.08, 0.09):
+            for sdz in (-0.02, 0.0, 0.02, 0.04, 0.06, 0.08):
                 dz_probe = torch.tensor([0.0, 0.0, sdz, sdz], device=device)
-                s_loss = float(loss_fn(imgs_coarse, train_idx, zero_r, dz_probe, zero_xy).item())
+                s_loss = float(loss_fn(imgs_coarse, train_idx, zero_r, dz_probe, zero_xy, gp_init).item())
                 if s_loss < best_s_loss:
                     best_s_loss = s_loss
                     best_sdz = sdz
             init_dz = torch.tensor([0.0, 0.0, best_sdz, best_sdz], device=device)
-            val_s1 = float(loss_fn(imgs_fine, val_idx, zero_r, init_dz, zero_xy).item())
+            val_s1 = float(loss_fn(imgs_fine, val_idx, zero_r, init_dz, zero_xy, gp_init).item())
 
-        # Stage 2: Coarse-to-fine 6-DoF Adam refinement anchored at Stage 1 global side_dz winner
-        max_rot_rad = float(np.deg2rad(1.0 if f_cnt >= 10 else 0.6))
-        rot_w = 0.60 if f_cnt >= 10 else 2.50
+        # Physical camera height bounds: front=0 (anchor), rear +-3cm, mirrors +-9cm
+        dz_scale = torch.tensor([0.0, 0.032, 0.090, 0.090], device=device)
         d_rpy_raw = torch.zeros((4, 3), device=device, requires_grad=True)
-        d_dz_raw = torch.atanh(torch.clamp(init_dz / 0.11, -0.95, 0.95)).clone().detach().requires_grad_(True)
+        d_dz_raw = torch.atanh(torch.clamp(init_dz / dz_scale.clamp_min(1e-3), -0.95, 0.95)).clone().detach().requires_grad_(True)
         d_xy_raw = torch.zeros((4, 2), device=device, requires_grad=True)
+        gp_raw = torch.zeros(2, device=device, requires_grad=True)
+        params = [d_rpy_raw, d_dz_raw, d_xy_raw] + ([gp_raw] if optimize_gp and f_cnt >= 10 else [])
+        opt = torch.optim.Adam(params, lr=0.015)
 
-        opt = torch.optim.Adam([d_rpy_raw, d_dz_raw, d_xy_raw], lr=0.015)
-        for stage_imgs, n_steps, lr in ((imgs_coarse, 60, 0.015), (imgs_fine, 100, 0.005)):
+        base_rpy = torch.zeros((4, 3), device=device)
+        base_dxy = torch.zeros((4, 2), device=device)
+        rot_w = 0.25 if f_cnt >= 10 else 2.20
+        stages = (
+            (imgs_coarse, 55, 0.014, float(np.deg2rad(3.5 if f_cnt >= 10 else 1.5)), 0.035),
+            (imgs_med, 65, 0.008, float(np.deg2rad(1.4 if f_cnt >= 10 else 0.8)), 0.016),
+            (imgs_fine, 85, 0.004, float(np.deg2rad(0.7 if f_cnt >= 10 else 0.5)), 0.008),
+        )
+        for stage_imgs, n_steps, lr, max_r, max_xy in stages:
             for pg in opt.param_groups:
                 pg["lr"] = lr
             for _ in range(n_steps):
                 opt.zero_grad()
-                rpy = max_rot_rad * torch.tanh(d_rpy_raw)
-                dz = 0.11 * torch.tanh(d_dz_raw)
-                dxy = (0.02 * torch.tanh(d_xy_raw)) if f_cnt >= 10 else zero_xy
+                rpy = base_rpy + max_r * torch.tanh(d_rpy_raw)
+                dz = dz_scale * torch.tanh(d_dz_raw)
+                dxy = (base_dxy + max_xy * torch.tanh(d_xy_raw)) if f_cnt >= 10 else zero_xy
+                gp_ab = (gp_init + 0.012 * torch.tanh(gp_raw)) if (optimize_gp and f_cnt >= 10) else gp_init
                 sym_z = (dz[2] - dz[3]) ** 2
-                reg = rot_w * (rpy ** 2).sum() + 0.05 * ((dz - init_dz) ** 2).sum() + 0.50 * sym_z + 3.0 * (dxy ** 2).sum()
-                loss = loss_fn(stage_imgs, train_idx, rpy, dz, dxy) + reg
+                reg = (
+                    rot_w * (rpy ** 2).sum()
+                    + 0.15 * ((dz - init_dz) ** 2).sum()
+                    + 1.20 * sym_z
+                    + 3.0 * (dxy ** 2).sum()
+                    + 6.0 * ((gp_ab - gp_init) ** 2).sum()
+                )
+                loss = loss_fn(stage_imgs, train_idx, rpy, dz, dxy, gp_ab) + reg
                 loss.backward()
                 opt.step()
+            with torch.no_grad():
+                base_rpy = (base_rpy + max_r * torch.tanh(d_rpy_raw)).detach()
+                if f_cnt >= 10:
+                    base_dxy = (base_dxy + max_xy * torch.tanh(d_xy_raw)).detach()
+                d_rpy_raw.zero_()
+                d_xy_raw.zero_()
 
         with torch.no_grad():
-            rpy_f = max_rot_rad * torch.tanh(d_rpy_raw)
-            dz_f = 0.11 * torch.tanh(d_dz_raw)
+            rpy_f = base_rpy
+            dz_f = dz_scale * torch.tanh(d_dz_raw)
             dz_f[0] = 0.0
-            dxy_f = (0.02 * torch.tanh(d_xy_raw)) if f_cnt >= 10 else zero_xy.clone()
+            dxy_f = base_dxy if f_cnt >= 10 else zero_xy.clone()
             dxy_f[0] = 0.0
-            val_s2 = float(loss_fn(imgs_fine, val_idx, rpy_f, dz_f, dxy_f).item())
+            gp_f = (gp_init + 0.012 * torch.tanh(gp_raw)) if (optimize_gp and f_cnt >= 10) else gp_init
+            val_s2 = float(loss_fn(imgs_fine, val_idx, rpy_f, dz_f, dxy_f, gp_f).item())
             if val_s1 <= val_s2:
                 val_after = val_s1
-                min_gain = 0.01
+                min_gain = 0.015
                 rpy_f.zero_()
                 dxy_f.zero_()
                 dz_f = init_dz
+                gp_f = gp_init
             else:
                 val_after = val_s2
-                min_gain = 0.02
+                min_gain = 0.025
             r_d_np = _euler_xyz_torch(rpy_f).cpu().numpy()
             dt_np = torch.cat([dxy_f, dz_f[:, None]], dim=-1).cpu().numpy()
             dt_np[0] = 0.0
             rot_norms_deg = np.rad2deg(np.linalg.norm(rpy_f.cpu().numpy(), axis=1)).round(2).tolist()
             dz_cm = [round(float(v * 100.0), 2) for v in dt_np[:, 2]]
+            gp_est = [round(float(gp_f[0].item()), 6), round(float(gp_f[1].item()), 6), round(float(pc), 5)]
 
     refined = copy.deepcopy(rig)
     # Cross-frame held-out validation gate selects cleanest generalization (Stage 1 or Stage 2)
@@ -574,8 +879,78 @@ def calibrate_rig_extrinsics_photometric(
             t_new[:3, 3] = -r_ce_new @ orig_new
             cam["T_cam_from_ego"] = t_new.tolist()
         refined["calib_dz_cm"] = dz_cm
+        if optimize_gp:
+            refined["estimated_ground_plane"] = gp_est
         return refined, rot_norms_deg
     return refined, [0.0] * len(cams)
+
+
+def build_standard_rig_calibration(
+    rig, manifest_rows, raw_root, mode="auto", load_targets_fn=None, sample_path_fn=None,
+    prepared_root=None, config=None, depth_centers=None, device=None, poses=None,
+):
+    """Unified 6-DoF rig calibration producing a standard RigCalibrationProfile (LiDAR-assisted or targetless)."""
+    if mode not in {"auto", "lidar", "camera-only"}:
+        raise ValueError(f"Unsupported calibration mode: {mode}")
+    has_lidar = any(row.get("lidar") for row in manifest_rows)
+    if mode == "lidar" and not has_lidar and load_targets_fn is None:
+        raise ValueError("LiDAR calibration mode requested but no LiDAR scans or targets are available")
+    use_lidar = (mode == "lidar") or (mode == "auto" and (has_lidar or load_targets_fn is not None))
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    rig_vc = estimate_valid_circles(rig, manifest_rows, raw_root)
+    base_gz = float(rig.get("ground_height_m", 0.0))
+    road_plane = [0.0, 0.0, base_gz]
+    plane_quality = {"source": "rig_nominal"}
+    if use_lidar:
+        measured = fit_lidar_road_plane(rig_vc, manifest_rows, raw_root) if has_lidar else None
+        if measured is not None:
+            road_plane, plane_quality = measured
+        elif load_targets_fn is not None and sample_path_fn is not None and prepared_root is not None and config is not None and depth_centers is not None:
+            road_plane, _ = estimate_road_plane(
+                rig_vc, manifest_rows, load_targets_fn, sample_path_fn, prepared_root, config, depth_centers
+            )
+            plane_quality = {"source": "prepared_depth"}
+
+    refined, rot_deg = calibrate_rig_extrinsics_photometric(
+        rig_vc, manifest_rows, raw_root,
+        load_targets_fn=load_targets_fn if use_lidar else None,
+        sample_path_fn=sample_path_fn if use_lidar else None,
+        prepared_root=prepared_root if use_lidar else None,
+        config=config if use_lidar else None,
+        depth_centers=depth_centers if use_lidar else None,
+        ground_z=road_plane[2], device=device, ground_plane=road_plane if use_lidar else None, poses=poses,
+    )
+    if not use_lidar and "estimated_ground_plane" in refined:
+        road_plane = refined["estimated_ground_plane"]
+        plane_quality = {"source": "camera_only_zncc_ba"}
+    return {
+        "schema_version": 1,
+        "calibration_mode": "lidar_assisted" if use_lidar else "targetless_camera_only",
+        "rig_id": refined.get("rig_id", rig.get("rig_id", "default-rig")),
+        "ground_plane": [round(float(v), 6) for v in road_plane],
+        "road_plane_validation": plane_quality,
+        "vehicle_spec": export_vehicle_spec(refined, ground_plane=road_plane),
+        "bowl_spec": export_bowl_spec(),
+        "rig": refined,
+        "camera_calib": export_camera_calib(refined),
+        "quality": {
+            "rot_deg": rot_deg,
+            "calib_dz_cm": refined.get("calib_dz_cm", [0.0] * len(refined["cameras"])),
+            "seam_parallax_cm": measure_seam_parallax_report(refined, road_plane),
+        },
+    }
+
+
+def load_calibrated_rig_profile(path):
+    """Load and validate a standard RigCalibrationProfile JSON."""
+    from omnishield.io import load_json
+
+    profile = load_json(path)
+    if profile.get("schema_version") != 1 or "rig" not in profile or "cameras" not in profile["rig"]:
+        raise ValueError(f"Invalid RigCalibrationProfile schema: {path}")
+    return profile
 
 
 def export_camera_calib(rig):
@@ -608,12 +983,12 @@ def export_camera_calib(rig):
     return out
 
 
-def bowl_seam_calibration(rig, calibs, ground_z, rings=20, candidates=19, ground_plane=None):
+def bowl_seam_calibration(rig, calibs, ground_z, rings=20, candidates=25, ground_plane=None):
     """Project candidate seam locations on the EXACT unified 3D Bowl surface into adjacent camera pairs."""
     by_slot = {cam["slot"]: i for i, cam in enumerate(rig["cameras"])}
     order = [by_slot[slot] for slot in ("front", "left", "rear", "right")]
     pa, pb, pc = [float(v) for v in ground_plane] if ground_plane is not None else (0.0, 0.0, float(ground_z))
-    max_off = 0.36
+    max_off = 0.26
     offsets = np.linspace(-max_off, max_off, candidates)
     displacements = np.array([-0.24, -0.12, 0.0, 0.12, 0.24])
     ring = np.linspace(0.0, 1.0, rings)[:, None]
@@ -626,7 +1001,7 @@ def bowl_seam_calibration(rig, calibs, ground_z, rings=20, candidates=19, ground
         # Evaluate candidate angles around the anchored corner diagonal, mapped to ego bowl geometry
         angle = mid + offsets
         ca, sa = np.cos(angle), np.sin(angle)
-        flat = ((ca / BOWL_FLAT_RX) ** 4 + (sa / BOWL_FLAT_RY) ** 4) ** -0.25
+        flat = _superellipse_radius(ca, sa, BOWL_FLAT_RX, BOWL_FLAT_RY)
         pad = 1.0 / np.hypot(ca / BOWL_PAD_X, sa / BOWL_PAD_Y)
         radius = np.where(ring <= BOWL_FLAT_SPLIT, 0.05 + (flat - 0.05) * ring / BOWL_FLAT_SPLIT,
                           flat + pad * wall)
@@ -668,10 +1043,112 @@ def bowl_seam_calibration(rig, calibs, ground_z, rings=20, candidates=19, ground
 
 
 FOREGROUND_SECTORS = 128
+POLAR_HEIGHT_RINGS = 48
+POLAR_R_MIN = 1.15
+POLAR_R_MAX = 7.60
+POLAR_MAX_HEIGHT = 0.36
+
+
+def _polar_height_grid(points, ground_plane=(0.0, 0.0, 0.0)):
+    """Build radially non-decreasing 2.5D curb/median elevation Z(sector, ring) in mm (zero ray folding)."""
+    if len(points) == 0:
+        return np.zeros((FOREGROUND_SECTORS, POLAR_HEIGHT_RINGS), dtype="<u2")
+    pa, pb, pc = [float(v) for v in ground_plane]
+    rad = np.hypot(points[:, 0], points[:, 1])
+    h = points[:, 2] - (pa * points[:, 0] + pb * points[:, 1] + pc)
+    m = (rad >= POLAR_R_MIN) & (rad < POLAR_R_MAX) & (h >= 0.10) & (h <= 0.85)
+    m &= ~((np.abs(points[:, 1]) < 1.32) & (np.abs(points[:, 0]) < 5.80))
+    if not m.any():
+        return np.zeros((FOREGROUND_SECTORS, POLAR_HEIGHT_RINGS), dtype="<u2")
+    pts_m = points[m]
+    rad_m = rad[m]
+    h_m = np.minimum(h[m], POLAR_MAX_HEIGHT)
+
+    # 1. Longitudinal Corridor Curb Profile: interpolates continuous left/right curbs across grazing corner seams
+    #    and places 100% of curb height right on the inner curb face (eliminates 50% Gaussian step-halving!).
+    angs_g = (np.arange(FOREGROUND_SECTORS, dtype=np.float32) + 0.5) * (2.0 * np.pi / FOREGROUND_SECTORS)
+    rads_g = POLAR_R_MIN + (np.arange(POLAR_HEIGHT_RINGS, dtype=np.float32) + 0.5) / POLAR_HEIGHT_RINGS * (POLAR_R_MAX - POLAR_R_MIN)
+    gx = np.cos(angs_g)[:, None] * rads_g[None, :]
+    gy = np.sin(angs_g)[:, None] * rads_g[None, :]
+    corridor_h = np.zeros((FOREGROUND_SECTORS, POLAR_HEIGHT_RINGS), dtype=np.float32)
+
+    x_bins = np.linspace(-8.0, 8.0, 33)
+    x_centers = 0.5 * (x_bins[:-1] + x_bins[1:])
+    for side in (1.0, -1.0):
+        lat_pts = side * pts_m[:, 1]
+        sm = (lat_pts >= 1.45) & (lat_pts <= 4.30) & (np.abs(pts_m[:, 0]) < 8.0) & (pts_m[:, 2] - (pa * pts_m[:, 0] + pb * pts_m[:, 1] + pc) <= 0.78)
+        if int(sm.sum()) < 30:
+            continue
+        sx = pts_m[sm, 0]
+        sy = lat_pts[sm]
+        sh = h_m[sm]
+        bi = np.clip(np.digitize(sx, x_bins) - 1, 0, len(x_centers) - 1)
+        valid_b, y_b, h_b = [], [], []
+        for b_idx in range(len(x_centers)):
+            bm = bi == b_idx
+            if int(bm.sum()) < 4:
+                continue
+            yb = float(np.percentile(sy[bm], 12))
+            face_m = bm & (sy <= yb + 0.45)
+            hb = float(np.clip(np.percentile(sh[face_m] if face_m.any() else sh[bm], 68), 0.14, POLAR_MAX_HEIGHT))
+            valid_b.append(b_idx)
+            y_b.append(yb)
+            h_b.append(hb)
+        if len(valid_b) < 5:
+            continue
+        valid_b = np.asarray(valid_b, dtype=np.int32)
+        yb_arr = median_filter(np.asarray(y_b, dtype=np.float64), size=min(5, len(y_b)), mode="nearest")
+        hb_arr = median_filter(np.asarray(h_b, dtype=np.float64), size=min(5, len(h_b)), mode="nearest")
+        # Reject non-curb scattered clutter if lateral jitter across bins exceeds 0.45m
+        if float(np.std(yb_arr - gaussian_filter1d(yb_arr, sigma=1.5, mode="nearest"))) > 0.45:
+            continue
+        xc_val = x_centers[valid_b]
+        x_min_supp = float(xc_val.min()) - 2.6
+        x_max_supp = float(xc_val.max()) + 2.6
+        y_interp = gaussian_filter1d(np.interp(x_centers, xc_val, yb_arr), sigma=2.2, mode="nearest")
+        h_interp = gaussian_filter1d(np.interp(x_centers, xc_val, hb_arr), sigma=2.4, mode="nearest")
+
+        lat_g = side * gy
+        yc_g = np.interp(gx, x_centers, y_interp)
+        hc_g = np.interp(gx, x_centers, h_interp)
+        x_fade = np.clip((gx - (x_min_supp - 1.0)) / 1.0, 0.0, 1.0) * np.clip(((x_max_supp + 1.0) - gx) / 1.0, 0.0, 1.0)
+        # Rise smoothly across [y_curb - 0.30m .. y_curb - 0.02m] so full curb height sits solidly at the curb face!
+        u_ramp = np.clip((lat_g - (yc_g - 0.30)) / 0.28, 0.0, 1.0)
+        ramp = u_ramp * u_ramp * (3.0 - 2.0 * u_ramp)
+        corridor_h = np.maximum(corridor_h, np.where(lat_g > 1.25, hc_g * ramp * x_fade, 0.0).astype(np.float32))
+
+    # 2. Direct Polar Cell Grid for arbitrary transverse islands/medians + inward 1-bin edge preservation
+    ang = np.mod(np.arctan2(pts_m[:, 1], pts_m[:, 0]), 2.0 * np.pi)
+    si = np.floor(ang * (FOREGROUND_SECTORS / (2.0 * np.pi))).astype(np.intp) % FOREGROUND_SECTORS
+    ri = np.clip(
+        np.floor((rad_m - POLAR_R_MIN) / (POLAR_R_MAX - POLAR_R_MIN) * POLAR_HEIGHT_RINGS).astype(np.intp),
+        0,
+        POLAR_HEIGHT_RINGS - 1,
+    )
+    cnt = np.zeros((FOREGROUND_SECTORS, POLAR_HEIGHT_RINGS), dtype=np.int32)
+    hsum = np.zeros((FOREGROUND_SECTORS, POLAR_HEIGHT_RINGS), dtype=np.float32)
+    np.add.at(cnt, (si, ri), 1)
+    np.add.at(hsum, (si, ri), h_m)
+    cnt_s = cnt + np.roll(cnt, 1, axis=0) + np.roll(cnt, -1, axis=0)
+    hsum_s = hsum + np.roll(hsum, 1, axis=0) + np.roll(hsum, -1, axis=0)
+    min_pts = 4 if len(points) < 35000 else 6
+    cell_h = np.where(cnt_s >= min_pts, hsum_s / np.maximum(cnt_s, 1), 0.0)
+    cell_h = median_filter(cell_h, size=(3, 1), mode="wrap")
+    # Shift 1 radial bin (~13cm) inward before smoothing so symmetric Gaussian preserves 100% height at curb face
+    cell_in = np.zeros_like(cell_h)
+    cell_in[:, :-1] = np.maximum(cell_h[:, :-1], cell_h[:, 1:])
+    cell_in[:, -1] = cell_h[:, -1]
+    cell_in[:, :2] = 0.0  # Keep innermost ring near ego flat
+
+    fused = np.maximum(corridor_h, cell_in)
+    mono_h = np.maximum.accumulate(fused, axis=1)
+    smooth_h = gaussian_filter(mono_h, sigma=(1.8, 0.9), mode=("wrap", "nearest"))
+    smooth_h = np.clip(np.maximum.accumulate(smooth_h, axis=1), 0.0, POLAR_MAX_HEIGHT)
+    return np.rint(1000.0 * smooth_h).astype("<u2")
 
 
 def _wall_ranges(points, ground_z, ground_plane=None):
-    """Estimate smooth azimuthal radius r(theta) to the nearest tall barrier/wall above the road plane."""
+    """Estimate smooth azimuthal radius r(theta) to the nearest barrier/curb above the road plane."""
     if len(points) == 0:
         return np.zeros(FOREGROUND_SECTORS, dtype="<u2")
     radius = np.hypot(points[:, 0], points[:, 1])
@@ -686,10 +1163,8 @@ def _wall_ranges(points, ground_z, ground_plane=None):
     n_rbins = 115
     radial_bin = np.minimum((radius / radial_step).astype(np.intp), n_rbins - 1)
     hist = np.zeros((FOREGROUND_SECTORS, n_rbins), dtype=np.int32)
-    # Only trigger wall rise on tall barriers/guardrails/walls (>= 0.45m); keep low curbs flat on road floor
-    m = (height >= 0.45) & (height <= 2.80) & (radius >= 1.85) & (radius < 11.0)
+    m = (height >= 0.22) & (height <= 2.80) & (radius >= 1.50) & (radius < 11.0)
     np.add.at(hist, (angular_bin[m], radial_bin[m]), 1)
-    # Circular angular smoothing across +-2 sectors prevents guardrail ripples
     hist = (
         hist
         + np.roll(hist, 1, axis=0) + np.roll(hist, -1, axis=0)
@@ -698,12 +1173,12 @@ def _wall_ranges(points, ground_z, ground_plane=None):
     hist[:, 1:] += hist[:, :-1].copy()
     sparse = len(points) < 35000
     supported = hist >= (6 if sparse else 12)
-    supported[:, :18] = False  # Ignore < 1.8m (ego body)
+    supported[:, :14] = False
     valid = supported.any(axis=1)
     nearest = np.maximum(np.argmax(supported, axis=1) - 0.5, 0) * radial_step
-    smooth_num = gaussian_filter1d(np.where(valid, nearest, 0.0), sigma=6.0, mode="wrap")
-    coverage = gaussian_filter1d(valid.astype(np.float64), sigma=6.0, mode="wrap")
-    return np.rint(100 * np.where(coverage >= 0.48, smooth_num / np.maximum(coverage, 1e-5), 0)).astype("<u2")
+    smooth_num = gaussian_filter1d(np.where(valid, nearest, 0.0), sigma=4.5, mode="wrap")
+    coverage = gaussian_filter1d(valid.astype(np.float64), sigma=4.5, mode="wrap")
+    return np.rint(100 * np.where(coverage >= 0.45, smooth_num / np.maximum(coverage, 1e-5), 0)).astype("<u2")
 
 
 def pack_foreground_ranges(points, rig, height=90, width=160, ground_z=None, static_points=None, ground_plane=None):
@@ -757,7 +1232,9 @@ def pack_foreground_ranges(points, rig, height=90, width=160, ground_z=None, sta
             foreground.fill(0)
         layers.append(np.rint(100 * foreground).astype("<u2"))
     header = np.asarray([width, height], dtype="<u4")
-    return header.tobytes() + np.stack(layers).tobytes() + _wall_ranges(wall_pts, ground_z, ground_plane=(pa, pb, pc)).tobytes()
+    wall_bytes = _wall_ranges(wall_pts, ground_z, ground_plane=(pa, pb, pc)).tobytes()
+    polar_bytes = _polar_height_grid(wall_pts, ground_plane=(pa, pb, pc)).tobytes()
+    return header.tobytes() + np.stack(layers).tobytes() + wall_bytes + polar_bytes
 
 
 def measure_seam_parallax_report(rig, ground_plane=(0.0, 0.0, 0.0)):
@@ -779,7 +1256,7 @@ def measure_seam_parallax_report(rig, ground_plane=(0.0, 0.0, 0.0)):
         ang = np.arctan2(pts[:, 1], pts[:, 0])
         ca, sa = np.cos(ang), np.sin(ang)
         r = np.hypot(pts[:, 0], pts[:, 1])
-        r_flat = ((ca / BOWL_FLAT_RX) ** 4 + (sa / BOWL_FLAT_RY) ** 4) ** -0.25
+        r_flat = _superellipse_radius(ca, sa, BOWL_FLAT_RX, BOWL_FLAT_RY)
         r_pad = 1.0 / np.hypot(ca / BOWL_PAD_X, sa / BOWL_PAD_Y)
         u = np.clip((r - r_flat) / np.maximum(r_pad, 0.5), 0.0, 1.0)
         bz = (pa * pts[:, 0] + pb * pts[:, 1] + pc) + np.where(r <= r_flat, 0.0, BOWL_WALL_HEIGHT * (u ** BOWL_WALL_POWER))
@@ -828,6 +1305,7 @@ class FeedForward3DGSDecoder:
         self.d_ground = []
         self.ray_valid = []
         self.ang_step = []
+        self.tex_uv = []
 
         # Precompute exact closed-form Double Sphere inverse rays pi^-1(u, v) on the depth feature grid
         for cam, cal in zip(rig["cameras"], calibs, strict=True):
@@ -845,6 +1323,9 @@ class FeedForward3DGSDecoder:
             # Reject rays past max_theta_deg
             cos_th = np.clip(rays_cam[..., 2], -1.0, 1.0)
             ok = in_img & ds_ok & (np.arccos(cos_th) <= cal["max_theta_rad"])
+            if "valid_circle" in cam:
+                vcx, vcy, vcr = cam["valid_circle"]
+                ok &= np.hypot(u_src - vcx, v_src - vcy) <= max(vcr - 4.0, 1.0)
 
             t_cam = rigid_matrix(cam["T_cam_from_ego"], cam["slot"])
             ego_from_cam = np.linalg.inv(t_cam)
@@ -861,9 +1342,110 @@ class FeedForward3DGSDecoder:
             self.rays_ego.append(rays_e.astype(np.float32))
             self.d_ground.append(dg.astype(np.float32))
             self.ray_valid.append(ok)
+            tex_u = np.clip((u_src + 0.5) / sw, 0.0, 1.0)
+            tex_v = np.clip(1.0 - (v_src + 0.5) / sh, 0.0, 1.0)
+            self.tex_uv.append(np.stack([tex_u, tex_v], axis=-1).astype(np.float32))
             # Approximate angular step per depth-grid pixel for metric Gaussian scale
             fx_ds = max(float(cal["ds"][0]), 100.0)
             self.ang_step.append(float((sw / max(self.dw, 1)) / fx_ds))
+
+    def decode_depth_surface_binary(self, depth_m, mask_bits, ground_plane=(0.0, 0.0, 0.0), gt_valid_mask=None):
+        """Build depth-discontinuity-cut local 3D surface mesh with live camera UV & Z-buffer support."""
+        pa, pb, pc = [float(v) for v in ground_plane]
+        vert_chunks, idx_chunks = [], []
+        vert_offset = 0
+        for c in range(len(self.origins)):
+            if not mask_bits[c]:
+                continue
+            d_raw = depth_m[c].astype(np.float32, copy=True)
+            ok = self.ray_valid[c].copy()
+            if gt_valid_mask is not None:
+                has_lidar = gt_valid_mask[c] & (d_raw > 0.30) & (d_raw < 14.0)
+                d_use = np.where(has_lidar, d_raw, 0.0)
+                ok &= has_lidar
+            else:
+                d_use = median_filter(d_raw, size=3)
+                ok &= (d_use > 0.35) & (d_use < 13.0)
+
+            pts = self.origins[c][None, None, :] + d_use[..., None] * self.rays_ego[c]
+            ex, ey, ez = pts[..., 0], pts[..., 1], pts[..., 2]
+            road_z = pa * ex + pb * ey + pc
+            h_road = ez - road_z
+            not_ego = ~ego_mask(pts, self.rig)
+            keep = ok & not_ego & (h_road >= 0.14) & (h_road <= 2.65) & (np.hypot(ex, ey) < 11.5)
+            # Symmetric corner ownership with narrow overlap margin keeps upright objects intact without Z-fighting
+            nx_e = ex / 1.48
+            if c == 0:
+                keep &= (nx_e >= np.abs(ey) * 0.80) & (ex > 0.0)
+            elif c == 1:
+                keep &= (-nx_e >= np.abs(ey) * 0.80) & (ex < 0.0)
+            elif c == 2:
+                keep &= (ey >= np.abs(nx_e) * 0.80) & (ey > 0.0)
+            else:
+                keep &= (-ey >= np.abs(nx_e) * 0.80) & (ey < 0.0)
+
+            if int(keep.sum()) < 4:
+                continue
+
+            # Cut triangles cleanly at depth discontinuities (prevent rubber-sheet webs across gaps)
+            k00, k01, k10, k11 = keep[:-1, :-1], keep[:-1, 1:], keep[1:, :-1], keep[1:, 1:]
+            d00, d01, d10, d11 = d_use[:-1, :-1], d_use[:-1, 1:], d_use[1:, :-1], d_use[1:, 1:]
+            p00, p01, p10, p11 = pts[:-1, :-1], pts[:-1, 1:], pts[1:, :-1], pts[1:, 1:]
+
+            def tri_valid(ka, kb, kc, da, db, dc, pa_t, pb_t, pc_t):
+                d_min = np.minimum(np.minimum(da, db), dc)
+                d_max = np.maximum(np.maximum(da, db), dc)
+                d_tol = np.maximum(0.28, 0.12 * d_min)
+                e1 = np.linalg.norm(pb_t - pa_t, axis=-1)
+                e2 = np.linalg.norm(pc_t - pb_t, axis=-1)
+                e3 = np.linalg.norm(pa_t - pc_t, axis=-1)
+                return ka & kb & kc & ((d_max - d_min) <= d_tol) & (np.maximum(np.maximum(e1, e2), e3) <= 0.65)
+
+            t1 = tri_valid(k00, k10, k01, d00, d10, d01, p00, p10, p01)
+            t2 = tri_valid(k01, k10, k11, d01, d10, d11, p01, p10, p11)
+            if not (t1.any() or t2.any()):
+                continue
+
+            used_grid = np.zeros((self.dh, self.dw), dtype=bool)
+            for mask_t, off_a, off_b, off_c in (
+                (t1, (0, 0), (1, 0), (0, 1)),
+                (t2, (0, 1), (1, 0), (1, 1)),
+            ):
+                if mask_t.any():
+                    vy, vx = np.nonzero(mask_t)
+                    used_grid[vy + off_a[0], vx + off_a[1]] = True
+                    used_grid[vy + off_b[0], vx + off_b[1]] = True
+                    used_grid[vy + off_c[0], vx + off_c[1]] = True
+
+            vid_map = np.full((self.dh, self.dw), -1, dtype=np.int32)
+            uy, ux = np.nonzero(used_grid)
+            n_v = len(uy)
+            vid_map[uy, ux] = np.arange(vert_offset, vert_offset + n_v, dtype=np.int32)
+
+            p_u = pts[uy, ux]
+            pos_3 = np.column_stack([-p_u[:, 1], p_u[:, 2], -p_u[:, 0]]).astype(np.float32)
+            uv_u = self.tex_uv[c][uy, ux]
+            cam_col = np.full((n_v, 1), float(c), dtype=np.float32)
+            vert_chunks.append(np.column_stack([pos_3, cam_col, uv_u]).astype("<f4"))
+
+            for mask_t, off_a, off_b, off_c in (
+                (t1, (0, 0), (1, 0), (0, 1)),
+                (t2, (0, 1), (1, 0), (1, 1)),
+            ):
+                if mask_t.any():
+                    vy, vx = np.nonzero(mask_t)
+                    ia = vid_map[vy + off_a[0], vx + off_a[1]]
+                    ib = vid_map[vy + off_b[0], vx + off_b[1]]
+                    ic = vid_map[vy + off_c[0], vx + off_c[1]]
+                    idx_chunks.append(np.column_stack([ia, ib, ic]).reshape(-1).astype("<u4"))
+            vert_offset += n_v
+
+        if not vert_chunks or not idx_chunks:
+            return np.asarray([0, 0], dtype="<u4").tobytes()
+        verts = np.concatenate(vert_chunks, axis=0)
+        indices = np.concatenate(idx_chunks, axis=0)
+        header = np.asarray([verts.shape[0], indices.shape[0]], dtype="<u4")
+        return header.tobytes() + verts.tobytes() + indices.tobytes()
 
     def decode_splats_binary(self, depth_m, imgs_rgb_4chw, cam_gains, mask_bits, gt_valid_mask=None):
         """Unproject raw fisheye depth + RGB into compact oriented 3D Gaussians (10 floats/splat)."""

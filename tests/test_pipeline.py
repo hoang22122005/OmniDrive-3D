@@ -1,6 +1,8 @@
 import io
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
@@ -144,6 +146,25 @@ class PipelineTest(unittest.TestCase):
         ranges = np.frombuffer(payload, dtype="<u2", offset=8, count=32 * 32)
         self.assertGreater(np.count_nonzero(ranges), 0)
         np.testing.assert_array_equal(np.unique(ranges[ranges > 0]), [round(100 * np.linalg.norm(point))])
+
+    def test_camera_only_replay_without_lidar_targets(self):
+        args = SimpleNamespace(raw=self.raw, prepared=self.prepared, model=ROOT / "configs/model/smoke.json",
+                               no_ai=True, split="val", device="cpu", allow_synthetic=True,
+                               threshold=0.5, max_uncertainty=0.85)
+        with patch("omnishield.eval.demo.load_targets", side_effect=AssertionError("target read")), \
+                patch("omnishield.eval.demo.load_lidar", side_effect=AssertionError("scan read")):
+            runtime = DemoRuntime(args)
+            mask = [True] * 4
+            self.assertFalse(any(row["lidar_present"] for row in runtime.frame_meta))
+            for i in range(len(runtime.dataset)):
+                self.assertIsNone(runtime.foreground_binary(i))
+                self.assertFalse(runtime.infer(i, mask, 0.5, 0.85)["adaptive_bowl"]["seam_zones"])
+                self.assertTrue(runtime.image_bytes(i, 0)[0])
+            front = next(iter(runtime.surround.values())).rect_cameras[0]
+            self.assertEqual(front["horizontal_fov_deg"], 120)
+            self.assertAlmostEqual(np.asarray(front["T_cam_from_ego"])[2, 2], -np.sin(np.deg2rad(17.5)))
+            self.assertTrue(runtime.rect_jpeg(0, 0))
+            self.assertTrue(runtime.underbody_jpeg(0, mask))
 
     def test_demo_runtime_serves_metadata_images_and_dropout_inference(self):
         ckpt_path = self.prepared / "demo_smoke.pt"
@@ -313,6 +334,139 @@ class PipelineTest(unittest.TestCase):
         tri_n = np.cross(verts[faces[:, 1], :3] - verts[faces[:, 0], :3], verts[faces[:, 2], :3] - verts[faces[:, 0], :3])
         dots = (tri_n * verts[faces[:, 0], 3:6]).sum(axis=1)
         self.assertGreater(float((dots > 0).mean()), 0.85)
+
+    def test_standard_rig_calibration_targetless_and_profile_loading(self):
+        from omnishield.eval.scene3d import (
+            bowl_seam_calibration,
+            build_standard_rig_calibration,
+            export_camera_calib,
+            load_calibrated_rig_profile,
+        )
+
+        rig = next(iter(self.manifest["rigs"].values()))
+        kb4_rig = {
+            "rig_id": "kb4-customer-test",
+            "ground_height_m": 0.0,
+            "ego_xy_bounds_m": rig["ego_xy_bounds_m"],
+            "cameras": [
+                {
+                    **cam,
+                    "model": "kb4",
+                    "distortion": [0.0, 0.0, 0.0, 0.0],
+                    "max_theta_deg": 90.0,
+                }
+                for cam in rig["cameras"]
+            ],
+        }
+        rows = [r for r in self.manifest["frames"] if r["split"] == "val"] * 2
+        profile = build_standard_rig_calibration(
+            kb4_rig, rows, self.raw, mode="camera-only", device=torch.device("cpu"),
+        )
+        self.assertEqual(profile["schema_version"], 1)
+        self.assertEqual(profile["calibration_mode"], "targetless_camera_only")
+        self.assertEqual(len(profile["rig"]["cameras"]), 4)
+        self.assertEqual(len(profile["quality"]["rot_deg"]), 4)
+        self.assertEqual(len(profile["quality"]["calib_dz_cm"]), 4)
+
+        out_path = self.prepared / "customer_rig_calibrated.json"
+        write_json(out_path, profile)
+        loaded = load_calibrated_rig_profile(out_path)
+        self.assertEqual(loaded["rig_id"], "kb4-customer-test")
+
+        seams = bowl_seam_calibration(kb4_rig, export_camera_calib(kb4_rig), 0.0)
+        self.assertAlmostEqual(seams["max_offset"], 0.26)
+        self.assertEqual(len(seams["offsets"]), 25)
+
+        args = SimpleNamespace(
+            raw=self.raw, prepared=self.prepared, model=ROOT / "configs/model/smoke.json",
+            calibrated_rig=out_path, no_ai=True, split="val", device="cpu",
+            allow_synthetic=True, threshold=0.5, max_uncertainty=0.85,
+        )
+        runtime = DemoRuntime(args)
+        self.assertEqual(runtime.calibrated_rigs["val"]["rig_id"], "kb4-customer-test")
+
+    def test_bowl_mesh_integrity_near_coverage_and_depth_discontinuity_surface(self):
+        from omnishield.eval.scene3d import (
+            FeedForward3DGSDecoder,
+            export_camera_calib,
+            measure_near_field_coverage,
+            verify_bowl_mesh_integrity,
+        )
+
+        # 1. Verify 0 inverted/degenerate triangles & radial monotonicity even under extreme curb deformation
+        walls = np.full(128, 3.10, dtype=np.float32)
+        walls[16:48] = 2.45
+        polar = np.zeros((128, 48), dtype=np.float32)
+        polar[:, 12:] = 0.28
+        integrity = verify_bowl_mesh_integrity(
+            ground_plane=(0.006, 0.002, 0.02),
+            wall_ranges=walls,
+            polar_height=polar,
+            left_poly=(0.0, 0.0, 2.35),
+            right_poly=(0.0, 0.0, -2.15),
+        )
+        self.assertTrue(integrity["radial_monotonic"])
+        self.assertEqual(integrity["inverted_triangles"], 0)
+        self.assertEqual(integrity["degenerate_triangles"], 0)
+
+        # 2. Verify near-field coverage audit distinguishes optical vs shader visibility
+        rig = next(iter(self.manifest["rigs"].values()))
+        cov_syn = measure_near_field_coverage(rig, (0.0, 0.0, 0.0), band_m=1.25)
+        self.assertGreater(cov_syn["total_points"], 50)
+        self.assertGreater(cov_syn["shader_covered"], 0)
+        def make_cam_t(origin_xyz, fwd_dir):
+            z = np.asarray(fwd_dir, dtype=np.float64)
+            z /= np.linalg.norm(z)
+            x = np.cross(z, [0.0, 0.0, 1.0])
+            x /= np.linalg.norm(x)
+            y = np.cross(z, x)
+            r_ec = np.column_stack([x, y, z])
+            t = np.eye(4)
+            t[:3, :3] = r_ec.T
+            t[:3, 3] = -r_ec.T @ np.asarray(origin_xyz, dtype=np.float64)
+            return t.tolist()
+
+        kb4_near_rig = {
+            "rig_id": "kb4-near-test",
+            "ground_height_m": 0.0,
+            "ego_xy_bounds_m": [-2.6, 2.6, -1.15, 1.15],
+            "cameras": [
+                {"slot": "front", "model": "kb4", "image_hw": [1080, 1920], "max_theta_deg": 95,
+                 "K": [[600, 0, 960], [0, 600, 540], [0, 0, 1]], "distortion": [0, 0, 0, 0],
+                 "T_cam_from_ego": make_cam_t([2.41, 0.0, 0.64], [0.9165, 0.0, -0.40])},
+                {"slot": "rear", "model": "kb4", "image_hw": [1080, 1920], "max_theta_deg": 95,
+                 "K": [[600, 0, 960], [0, 600, 540], [0, 0, 1]], "distortion": [0, 0, 0, 0],
+                 "T_cam_from_ego": make_cam_t([-2.41, 0.0, 0.92], [-0.9165, 0.0, -0.40])},
+                {"slot": "left", "model": "kb4", "image_hw": [1080, 1920], "max_theta_deg": 95,
+                 "K": [[600, 0, 960], [0, 600, 540], [0, 0, 1]], "distortion": [0, 0, 0, 0],
+                 "T_cam_from_ego": make_cam_t([0.99, 0.97, 1.03], [0.0, 0.75, -0.66])},
+                {"slot": "right", "model": "kb4", "image_hw": [1080, 1920], "max_theta_deg": 95,
+                 "K": [[600, 0, 960], [0, 600, 540], [0, 0, 1]], "distortion": [0, 0, 0, 0],
+                 "T_cam_from_ego": make_cam_t([0.99, -0.97, 1.03], [0.0, -0.75, -0.66])},
+            ],
+        }
+        cov_kb4 = measure_near_field_coverage(kb4_near_rig, (0.0, 0.0, 0.0), band_m=0.25)
+        self.assertGreater(cov_kb4["shader_covered"], 150)
+
+        # 3. Verify depth-discontinuity surface cuts across sharp depth jumps (no stretched rubber-sheet triangles)
+        calibs = export_camera_calib(rig)
+        dec = FeedForward3DGSDecoder(rig, calibs, tuple(self.config["image_hw"]), feature_stride=4)
+        depth_m = np.full((4, dec.dh, dec.dw), 2.5, dtype=np.float32)
+        depth_m[0, :, dec.dw // 2:] = 8.0  # Sharp 5.5m jump down the middle of front camera
+        gt_valid = np.ones((4, dec.dh, dec.dw), dtype=bool)
+        blob = dec.decode_depth_surface_binary(depth_m, [True, True, True, True], gt_valid_mask=gt_valid)
+        n_v, n_i = np.frombuffer(blob[:8], dtype="<u4")
+        self.assertGreater(n_v, 10)
+        self.assertGreater(n_i, 12)
+        verts = np.frombuffer(blob[8:8 + int(n_v) * 24], dtype="<f4").reshape(int(n_v), 6)
+        faces = np.frombuffer(blob[8 + int(n_v) * 24:], dtype="<u4").reshape(-1, 3)
+        p0, p1, p2 = verts[faces[:, 0], :3], verts[faces[:, 1], :3], verts[faces[:, 2], :3]
+        max_edge = max(
+            float(np.linalg.norm(p1 - p0, axis=1).max()),
+            float(np.linalg.norm(p2 - p1, axis=1).max()),
+            float(np.linalg.norm(p0 - p2, axis=1).max()),
+        )
+        self.assertLessEqual(max_edge, 0.66)
 
 
 if __name__ == "__main__":

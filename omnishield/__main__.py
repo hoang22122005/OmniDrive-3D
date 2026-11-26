@@ -86,8 +86,11 @@ def cli():
     replay.add_argument("--max-uncertainty", type=float, default=0.85)
     demo = commands.add_parser("demo", help="Launch an interactive local GPU demo UI on real PHENIKAA frames")
     paths(demo)
-    demo.add_argument("--checkpoint", type=Path, required=True)
-    demo.add_argument("--dino-source", type=Path, required=True)
+    demo.add_argument("--checkpoint", type=Path, default=None)
+    demo.add_argument("--dino-source", type=Path, default=None)
+    demo.add_argument("--model", type=Path, default=ROOT / "configs/model/edge_mvp.json")
+    demo.add_argument("--calibrated-rig", type=Path, default=None, help="Optional RigCalibrationProfile JSON")
+    demo.add_argument("--no-ai", action="store_true", help="Pure 3D surround-view mode without loading AI backbone")
     demo.add_argument("--split", choices=("all", "train", "val", "test"), default="all")
     demo.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     demo.add_argument("--host", default="127.0.0.1")
@@ -95,6 +98,16 @@ def cli():
     demo.add_argument("--threshold", type=float, default=0.5)
     demo.add_argument("--max-uncertainty", type=float, default=0.85)
     demo.add_argument("--open", action="store_true")
+    cal_rig = commands.add_parser("calibrate-rig", help="Run standard 6-DoF rig calibration (LiDAR-assisted or targetless camera-only)")
+    cal_rig.add_argument("--raw", type=Path, required=True)
+    cal_rig.add_argument("--prepared", type=Path)
+    cal_rig.add_argument("--manifest", type=Path)
+    cal_rig.add_argument("--rig", type=Path, help="Standalone rig JSON when calibrating without prepared manifest")
+    cal_rig.add_argument("--model", type=Path, default=ROOT / "configs/model/edge_mvp.json")
+    cal_rig.add_argument("--mode", choices=("auto", "lidar", "camera-only"), default="auto")
+    cal_rig.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
+    cal_rig.add_argument("--allow-synthetic", action="store_true")
+    cal_rig.add_argument("--out", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -114,6 +127,11 @@ def main():
 
         args.manifest = args.manifest or args.prepared / "manifest.json"
         serve_demo(args)
+        return
+    if args.action == "calibrate-rig":
+        from omnishield.eval.demo import run_calibrate_rig
+
+        run_calibrate_rig(args)
         return
     if args.action == "fixture":
         synthetic(args.raw, args.prepared, load_json(ROOT / "configs/model/smoke.json"))

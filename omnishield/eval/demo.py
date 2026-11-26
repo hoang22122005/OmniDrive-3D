@@ -26,6 +26,7 @@ from omnishield.eval.scene3d import (
     bowl_seam_calibration,
     build_adaptive_bowl_template,
     build_smooth_occupancy_mesh_binary,
+    build_standard_rig_calibration,
     calibrate_rig_extrinsics_photometric,
     compute_adaptive_bowl_radii,
     compute_corridor_profile,
@@ -33,16 +34,20 @@ from omnishield.eval.scene3d import (
     estimate_road_plane,
     estimate_valid_circles,
     export_bowl_spec,
+    fit_lidar_road_plane,
     export_camera_calib,
     export_vehicle_spec,
     extract_dynamic_objects,
     extract_seam_shift_zones,
     extract_vector_road_edges,
+    load_calibrated_rig_profile,
+    measure_near_field_coverage,
     measure_seam_parallax_report,
     pack_foreground_ranges,
+    verify_bowl_mesh_integrity,
 )
 from omnishield.geometry.calibration import Grid, depth_edges, ego_mask, project, rigid_matrix, transform
-from omnishield.io import child_path
+from omnishield.io import child_path, fingerprint, load_json, write_json
 from omnishield.models.edge import OmniShieldEdge
 
 
@@ -195,6 +200,8 @@ class SurroundViewRenderer:
             rig, self.guidelines["camera_calib"], pc, ground_plane=self.ground_plane
         )
         self.guidelines["seam_parallax_cm"] = measure_seam_parallax_report(rig, self.ground_plane)
+        self.guidelines["near_field_coverage"] = measure_near_field_coverage(rig, self.ground_plane)
+        self.guidelines["mesh_integrity"] = verify_bowl_mesh_integrity(self.ground_plane)
         self.guidelines["overlap_uv"] = self.color_cal.overlap_uv
         self.gs_decoder = FeedForward3DGSDecoder(
             rig, self.guidelines["camera_calib"], model_hw, feature_stride=4, ground_z=pc
@@ -211,7 +218,7 @@ class SurroundViewRenderer:
         axis = ego_from_cam[:3, 2]
         pitch = np.arctan2(-axis[2], np.linalg.norm(axis[:2]))
         pitch_offset = {"front": -4.0, "rear": -6.0, "left": 15.0, "right": 15.0}
-        pitch += np.deg2rad(pitch_offset[cam["slot"]])
+        pitch = np.deg2rad(17.5) if cam["slot"] == "front" else pitch + np.deg2rad(pitch_offset[cam["slot"]])
         cp, sp = np.cos(pitch), np.sin(pitch)
         basis = ego_from_level @ np.array([[1, 0, 0], [0, cp, sp], [0, -sp, cp]])
         extrinsics = np.eye(4)
@@ -223,7 +230,7 @@ class SurroundViewRenderer:
 
         # Fit the widest fully supported crop, with a cap to limit perspective edge stretch.
         probes_u, probes_v = np.meshgrid(np.linspace(0, ow - 1, 33), np.linspace(0, oh - 1, 19))
-        for fov in (100, 96, 92, 88, 84, 76, 68, 60, 50, 40):
+        for fov in ((120,) if cam["slot"] == "front" else (100, 96, 92, 88, 84, 76, 68, 60, 50, 40)):
             f = 0.5 * ow / np.tan(np.deg2rad(fov * 0.5))
             uv, _, valid = project(origin + rays(probes_u, probes_v, f) @ basis.T, cam, (sh, sw))
             if valid.all() and (uv >= 2).all() and (uv < [sw - 2, sh - 2]).all():
@@ -234,6 +241,9 @@ class SurroundViewRenderer:
                     break
         uu, vv = np.meshgrid(np.arange(ow), np.arange(oh))
         uv, _, valid = project(origin + rays(uu, vv, f) @ basis.T, cam, (sh, sw))
+        if "valid_circle" in cam:
+            sx, sy, radius = cam["valid_circle"]
+            valid &= np.hypot(uv[..., 0] - sx, uv[..., 1] - sy) <= radius
         grid = np.where(valid[..., None], 2 * (uv + 0.5) / [sw, sh] - 1, 2).astype(np.float32)
         return grid, {
             "K": [[f, 0, cx], [0, f, cy], [0, 0, 1]],
@@ -350,6 +360,14 @@ class SurroundViewRenderer:
             "wide": {"front": wide_front, "rear": wide_rear_mirror},
         }
 
+    @staticmethod
+    def _decode_rgb_half(path):
+        with Image.open(path) as image:
+            w, h = image.size
+            if w >= 1600 and h >= 900 and w % 2 == h % 2 == 0:
+                image.draft("RGB", (w // 2, h // 2))
+            return np.array(image.convert("RGB"))
+
     @torch.no_grad()
     def render_bev_jpeg(self, raw_root, row, mask_bits):
         canvas = torch.zeros((BEV_X[2], BEV_Y[2], 3), dtype=torch.float32, device=self.device)
@@ -357,13 +375,8 @@ class SurroundViewRenderer:
         for c, (rel, keep) in enumerate(zip(row["images"], mask_bits, strict=True)):
             if not keep or rel is None:
                 continue
-            with Image.open(child_path(raw_root, rel)) as image:
-                w, h = image.size
-                if w >= 1600 and h >= 900 and w % 2 == h % 2 == 0:
-                    # Decode half-size JPEG directly for the small BEV output.
-                    image.draft("RGB", (w // 2, h // 2))
-                rgb = np.array(image.convert("RGB"))
-            img_t = torch.from_numpy(rgb).permute(2, 0, 1).to(self.device, dtype=torch.float32) / 255.0
+            rgb = self._decode_rgb_half(child_path(raw_root, rel))
+            img_t = torch.from_numpy(rgb).permute(2, 0, 1).to(self.device, dtype=torch.float32, non_blocking=True) / 255.0
             sampled = F.grid_sample(img_t.unsqueeze(0), self.bev_grids[c].unsqueeze(0),
                                     mode="bilinear", align_corners=False)[0].permute(1, 2, 0)
             w = self.bev_weights[c]
@@ -372,7 +385,7 @@ class SurroundViewRenderer:
         # A single supported peripheral source may have tiny weight and still provide the image.
         bev = (canvas / wsum.clamp_min(1e-9)).clamp(0, 1)
         bev = torch.where(wsum >= 1e-9, bev, torch.tensor([0.04, 0.07, 0.06], device=self.device))
-        return _to_jpeg((bev * 255.0).byte().cpu().numpy(), quality=88)
+        return _to_jpeg((bev * 255.0).byte().cpu().numpy(), quality=85)
 
     @torch.no_grad()
     def solve_cam_gains(self, imgs_norm, mask_bits):
@@ -420,9 +433,10 @@ class SurroundViewRenderer:
                 better = w > best_w + 1e-4
                 if not better.any():
                     continue
-                arr = np.asarray(Image.open(child_path(raw_root, rel)).convert("RGB"), dtype=np.float32) / 255.0
-                u_idx = np.clip(np.rint(uv[better, 0]).astype(np.int32), 0, sw - 1)
-                v_idx = np.clip(np.rint(uv[better, 1]).astype(np.int32), 0, sh - 1)
+                arr = self._decode_rgb_half(child_path(raw_root, rel)).astype(np.float32) / 255.0
+                dh, dw = arr.shape[:2]
+                u_idx = np.clip(np.rint(uv[better, 0] * (dw / sw)).astype(np.int32), 0, dw - 1)
+                v_idx = np.clip(np.rint(uv[better, 1] * (dh / sh)).astype(np.int32), 0, dh - 1)
                 frame_rgb[better] = arr[v_idx, u_idx]
                 best_w[better] = w[better]
 
@@ -431,76 +445,87 @@ class SurroundViewRenderer:
                 canvas[ok_k] = frame_rgb[ok_k]
                 filled |= ok_k
 
-        return _to_jpeg((np.clip(canvas, 0.0, 1.0) * 255.0).astype(np.uint8), quality=90)
+        return _to_jpeg((np.clip(canvas, 0.0, 1.0) * 255.0).astype(np.uint8), quality=86)
 
     @torch.no_grad()
     def render_rect_jpeg(self, raw_root, row, cam_idx):
         rel = row["images"][cam_idx]
         if rel is None:
             return None
-        arr = np.asarray(Image.open(child_path(raw_root, rel)).convert("RGB"), dtype=np.float32) / 255.0
-        img_t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(self.device)
+        arr = self._decode_rgb_half(child_path(raw_root, rel))
+        img_t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(self.device, dtype=torch.float32, non_blocking=True) / 255.0
         rect = F.grid_sample(img_t, self.rect_grids[cam_idx].unsqueeze(0),
                              mode="bilinear", align_corners=False)[0].permute(1, 2, 0).clamp(0, 1)
-        return _to_jpeg((rect * 255.0).byte().cpu().numpy(), quality=88)
+        return _to_jpeg((rect * 255.0).byte().cpu().numpy(), quality=84)
 
     @torch.no_grad()
     def render_wide_jpeg(self, raw_root, row, cam_idx, mirror=False):
         rel = row["images"][cam_idx]
         if rel is None:
             return None
-        arr = np.asarray(Image.open(child_path(raw_root, rel)).convert("RGB"), dtype=np.float32) / 255.0
-        img_t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(self.device)
+        arr = self._decode_rgb_half(child_path(raw_root, rel))
+        img_t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(self.device, dtype=torch.float32, non_blocking=True) / 255.0
         wide = F.grid_sample(img_t, self.wide_grids[cam_idx].unsqueeze(0),
                              mode="bilinear", align_corners=False)[0].permute(1, 2, 0).clamp(0, 1)
         if mirror:
             wide = torch.flip(wide, dims=[1])
-        return _to_jpeg((wide * 255.0).byte().cpu().numpy(), quality=88)
+        return _to_jpeg((wide * 255.0).byte().cpu().numpy(), quality=84)
 
 
 class DemoRuntime:
     def __init__(self, args):
-        state = load_checkpoint(args.checkpoint)
-        config = state["model_config"]
-        if config["backbone"] != "small_cnn" and dino_revision(args.dino_source) != state["dino_revision"]:
-            raise ValueError("DINOv3 source revision differs from checkpoint")
         device = torch.device(args.device)
         if device.type == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested for demo but PyTorch CUDA is unavailable")
-        model = OmniShieldEdge(config, args.dino_source, initialize=False).to(device).eval()
-        missing, unexpected = model.load_state_dict(state["model"], strict=False)
-        if unexpected or (set(missing) - {"occupancy.weight", "occupancy.bias"}):
-            raise RuntimeError(f"Incompatible checkpoint keys: missing={missing}, unexpected={unexpected}")
-        if missing:
-            torch.nn.init.zeros_(model.occupancy.weight)
-            torch.nn.init.constant_(model.occupancy.bias, -20.0)
+        ai_enabled = (not getattr(args, "no_ai", False)) and bool(getattr(args, "checkpoint", None))
+        if ai_enabled:
+            state = load_checkpoint(args.checkpoint)
+            config = state["model_config"]
+            if config["backbone"] != "small_cnn" and dino_revision(args.dino_source) != state["dino_revision"]:
+                raise ValueError("DINOv3 source revision differs from checkpoint")
+            model = OmniShieldEdge(config, args.dino_source, initialize=False).to(device).eval()
+            missing, unexpected = model.load_state_dict(state["model"], strict=False)
+            if unexpected or (set(missing) - {"occupancy.weight", "occupancy.bias"}):
+                raise RuntimeError(f"Incompatible checkpoint keys: missing={missing}, unexpected={unexpected}")
+            if missing:
+                torch.nn.init.zeros_(model.occupancy.weight)
+                torch.nn.init.constant_(model.occupancy.bias, -20.0)
+            supervised = set(state.get("supervised_heads", ()))
+        else:
+            model_cfg_path = getattr(args, "model", None) or (Path(__file__).resolve().parents[2] / "configs/model/edge_mvp.json")
+            config = load_json(model_cfg_path)
+            model = None
+            supervised = set()
         manifest = load_manifest(args.prepared / "manifest.json", config, allow_synthetic=args.allow_synthetic)
         dataset = OccupancyDataset(manifest, config, args.raw, args.prepared, args.split)
         if not len(dataset):
             raise ValueError(f"Empty {args.split} split")
 
         self.args = args
+        self.ai_enabled = ai_enabled
         self.config = config
         self.grid = Grid.from_config(config["grid"])
         self.device = device
         self.device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
         self.model = model
         self.dataset = dataset
-        self.supervised = set(state.get("supervised_heads", ()))
+        self.supervised = supervised
         self.lock = threading.Lock()
         self._field_cache = {}
         self._mesh_cache = {}
         self._splat_cache = {}
+        self._depth_surface_cache = {}
         d_edges = depth_edges(config["depth"])
         self.depth_centers = (0.5 * (d_edges[:-1] + d_edges[1:])).astype(np.float32)
         self.lut_tensors = {}
-        for rig_id in dataset.rigs:
-            lut = dataset.lut(rig_id)
-            self.lut_tensors[rig_id] = {
-                "uv": torch.from_numpy(lut["uv"]).unsqueeze(0).to(device),
-                "bins": torch.from_numpy(lut["bins"]).unsqueeze(0).to(device),
-                "geometry_valid": torch.from_numpy(lut["valid"]).unsqueeze(0).to(device),
-            }
+        if ai_enabled:
+            for rig_id in dataset.rigs:
+                lut = dataset.lut(rig_id)
+                self.lut_tensors[rig_id] = {
+                    "uv": torch.from_numpy(lut["uv"]).unsqueeze(0).to(device),
+                    "bins": torch.from_numpy(lut["bins"]).unsqueeze(0).to(device),
+                    "geometry_valid": torch.from_numpy(lut["valid"]).unsqueeze(0).to(device),
+                }
 
         # Group dataset rows by video clip (drive_id) & run cross-clip edge-weighted BA once per physical rig_id!
         self.surround = {}
@@ -517,29 +542,94 @@ class DemoRuntime:
             clip_groups[key]["rows"].append(row)
 
         rig_calib_cache = {}
+        self._raw_decoders = {}
+        self.poses = [_load_pose_4x4(args.raw, row) for row in dataset.rows]
+        external_profile = (
+            load_calibrated_rig_profile(args.calibrated_rig)
+            if getattr(args, "calibrated_rig", None)
+            else None
+        )
+        is_real_phenikaa = not getattr(args, "allow_synthetic", False) and manifest.get("source") == "phenikaa"
         for (rig_id, drive_id), grp in clip_groups.items():
             rig = dataset.rigs[rig_id]
             clip_rows = grp["rows"]
             if rig_id not in rig_calib_cache:
                 all_r = rig_rows[rig_id]
-                if not getattr(args, "allow_synthetic", False) and manifest.get("source") == "phenikaa":
-                    calib_rig = estimate_valid_circles(rig, all_r, args.raw)
-                    road_plane, _ = estimate_road_plane(
-                        calib_rig, all_r, load_targets, sample_path, args.prepared, config, self.depth_centers
+                cache_file = args.prepared / f".calib_cache_v5_{rig_id}.json"
+                loaded = None
+                if external_profile is not None:
+                    ext_rig = external_profile["rig"]
+                    ext_plane = external_profile["ground_plane"]
+                    ext_rot = external_profile.get("quality", {}).get("rot_deg", [0.0] * len(ext_rig["cameras"]))
+                    loaded = (ext_rig, ext_rot, ext_plane, {})
+                elif is_real_phenikaa and cache_file.is_file():
+                    try:
+                        cobj = load_json(cache_file)
+                        if cobj.get("n_frames") == len(all_r) and cobj.get("rig_id") == rig_id:
+                            loaded = (cobj["calib_rig"], cobj["rot_deg"], cobj["base_plane"], cobj.get("clip_planes", {}))
+                    except (OSError, ValueError, KeyError):
+                        loaded = None
+                if loaded is not None:
+                    calib_rig, rot_deg, base_plane, clip_planes = loaded
+                elif is_real_phenikaa:
+                    profile = build_standard_rig_calibration(
+                        rig, all_r, args.raw, mode="auto", load_targets_fn=load_targets,
+                        sample_path_fn=sample_path, prepared_root=args.prepared, config=config,
+                        depth_centers=self.depth_centers, device=device, poses=self.poses,
                     )
-                    calib_rig, rot_deg = calibrate_rig_extrinsics_photometric(
-                        calib_rig, all_r, args.raw, load_targets, sample_path, args.prepared, config,
-                        self.depth_centers, road_plane[2], device, ground_plane=road_plane,
-                    )
+                    calib_rig = profile["rig"]
+                    rot_deg = profile["quality"]["rot_deg"]
+                    base_plane = profile["ground_plane"]
+                    clip_planes = {}
                 else:
                     calib_rig = rig
-                    road_plane = [0.0, 0.0, float(rig.get("ground_height_m", 0.0))]
+                    base_plane = [0.0, 0.0, float(rig.get("ground_height_m", 0.0))]
                     rot_deg = [0.0] * len(rig["cameras"])
-                rig_calib_cache[rig_id] = (calib_rig, rot_deg, road_plane)
+                    clip_planes = {}
+                rig_calib_cache[rig_id] = [calib_rig, rot_deg, base_plane, clip_planes, cache_file, (loaded is None) and (external_profile is None)]
+                if ai_enabled:
+                    raw_calibs = export_camera_calib(rig)
+                    self._raw_decoders[rig_id] = FeedForward3DGSDecoder(
+                        rig, raw_calibs, tuple(config["image_hw"]), feature_stride=4, ground_z=base_plane[2]
+                    )
 
-            calib_rig, rot_deg, road_plane = rig_calib_cache[rig_id]
+            calib_rig, rot_deg, base_plane, clip_planes, cache_file, cache_dirty = rig_calib_cache[rig_id]
+            if is_real_phenikaa:
+                if drive_id in clip_planes:
+                    road_plane = clip_planes[drive_id]
+                else:
+                    road_plane, _ = estimate_road_plane(
+                        rig, clip_rows, load_targets, sample_path, args.prepared, config, self.depth_centers
+                    )
+                    clip_planes[drive_id] = road_plane
+                    rig_calib_cache[rig_id][5] = True
+            else:
+                road_plane = base_plane
+            plane_quality = {}
+            if is_real_phenikaa:
+                scan_ids = [row.get("lidar") for row in clip_rows]
+                signature = fingerprint([rig, scan_ids])
+                plane_cache = args.prepared / f".road_plane_v1_{signature}.json"
+                measured = None
+                if plane_cache.is_file():
+                    try:
+                        measured = load_json(plane_cache)
+                    except (ValueError, OSError):
+                        pass
+                if measured is None:
+                    measured = fit_lidar_road_plane(rig, clip_rows, args.raw)
+                    if measured is not None:
+                        try:
+                            write_json(plane_cache, measured)
+                        except OSError:
+                            pass
+                if measured is not None:
+                    road_plane, plane_quality = measured
+                else:
+                    plane_quality = {"source": "prepared_depth_or_rig"}
             self.calibrated_rigs[drive_id] = calib_rig
             sr = SurroundViewRenderer(calib_rig, device, tuple(config["image_hw"]), ground_z=road_plane[2], ground_plane=road_plane)
+            sr.guidelines["road_plane_validation"] = plane_quality
             sr.guidelines["extrinsic_refine_deg"] = rot_deg
             sr.guidelines["calib_dz_cm"] = calib_rig.get("calib_dz_cm", [0.0] * len(rig["cameras"]))
             self.surround[drive_id] = sr
@@ -551,14 +641,25 @@ class DemoRuntime:
                 "surround": sr.guidelines,
             })
 
-        self.poses = [_load_pose_4x4(args.raw, row) for row in dataset.rows]
+        if is_real_phenikaa:
+            for rig_id, (calib_rig, rot_deg, base_plane, clip_planes, cache_file, cache_dirty) in rig_calib_cache.items():
+                if cache_dirty:
+                    try:
+                        write_json(cache_file, {
+                            "rig_id": rig_id,
+                            "n_frames": len(rig_rows[rig_id]),
+                            "calib_rig": calib_rig,
+                            "rot_deg": rot_deg,
+                            "base_plane": base_plane,
+                            "clip_planes": clip_planes,
+                        })
+                    except OSError:
+                        pass
+
         self.frame_meta = []
         clip_start_ts = {grp["drive_id"]: grp["rows"][0]["timestamp_ns"] for grp in clip_groups.values()}
         prev_speeds = []
         for idx, row in enumerate(dataset.rows):
-            targets = load_targets(sample_path(args.prepared, row), config)
-            occ = targets["occupancy"] == 1
-            sem = targets["semantics"]
             odom = [0.0, 0.0, 0.0]
             steer_rad = 0.0
             raw_speed = 0.0
@@ -586,16 +687,21 @@ class DemoRuntime:
                 "frame_id": row["frame_id"],
                 "timestamp_s": round((row["timestamp_ns"] - clip_start_ts[row["drive_id"]]) / 1e9, 2),
                 "images_present": [img is not None for img in row["images"]],
-                "lidar_present": bool(row.get("lidar")) or bool((targets.get("depth", -1) >= 0).any()),
+                "lidar_present": False,
                 "odom_from_prev": odom,
                 "steer_rad": round(steer_rad, 4),
                 "speed_kmh": round(float(smooth_speed), 1),
             }
-            for cls_idx, cls_name in enumerate(config["classes"][1:], 1):
-                entry[cls_name] = int((occ & (sem == cls_idx)).sum())
+            if ai_enabled:
+                targets = load_targets(sample_path(args.prepared, row), config)
+                occ = targets["occupancy"] == 1
+                sem = targets["semantics"]
+                entry["lidar_present"] = bool(row.get("lidar")) or bool(np.any(targets.get("depth", -1) >= 0))
+                for cls_idx, cls_name in enumerate(config["classes"][1:], 1):
+                    entry[cls_name] = int((occ & (sem == cls_idx)).sum())
             self.frame_meta.append(entry)
 
-        if device.type == "cuda":
+        if self.ai_enabled and device.type == "cuda":
             self.infer(0, [True] * config["camera_count"], args.threshold, args.max_uncertainty)
 
     def metadata(self):
@@ -603,6 +709,7 @@ class DemoRuntime:
         return {
             "source": first_drive,
             "split": self.args.split,
+            "ai_enabled": self.ai_enabled,
             "device": self.device_name,
             "device_type": self.device.type,
             "torch": torch.__version__,
@@ -633,6 +740,7 @@ class DemoRuntime:
         row = self.dataset.rows[index]
         return self.surround[row["drive_id"]].render_bev_jpeg(self.args.raw, row, mask_bits)
 
+    @lru_cache(maxsize=128)
     def rect_jpeg(self, index, cam):
         row = self.dataset.rows[index]
         return self.surround[row["drive_id"]].render_rect_jpeg(self.args.raw, row, cam)
@@ -641,11 +749,15 @@ class DemoRuntime:
         row = self.dataset.rows[index]
         return self.surround[row["drive_id"]].render_wide_jpeg(self.args.raw, row, cam, mirror=mirror)
 
-    def underbody_jpeg(self, index, mask_bits):
+    @lru_cache(maxsize=64)
+    def _underbody_jpeg_cached(self, index, mask_tuple):
         row = self.dataset.rows[index]
         return self.surround[row["drive_id"]].render_underbody_seed_jpeg(
-            self.args.raw, self.dataset.rows, self.poses, index, mask_bits
+            self.args.raw, self.dataset.rows, self.poses, index, list(mask_tuple)
         )
+
+    def underbody_jpeg(self, index, mask_bits):
+        return self._underbody_jpeg_cached(index, tuple(bool(b) for b in mask_bits))
 
     def bowl_binary(self):
         first_drive = self.dataset.rows[0]["drive_id"]
@@ -653,6 +765,8 @@ class DemoRuntime:
 
     @lru_cache(maxsize=256)
     def foreground_binary(self, index):
+        if not self.ai_enabled:
+            return None
         row = self.dataset.rows[index]
         raw_rig = self.dataset.rigs[row["rig_id"]]
         calib_rig = self.calibrated_rigs[row["drive_id"]]
@@ -665,12 +779,11 @@ class DemoRuntime:
             except (ImportError, OSError):
                 points = None
         if points is None:
-            # Unproject prepared LiDAR depth targets using original rig rays (so 3D ego coords are exact!)
+            # Unproject prepared LiDAR depth targets using pre-built raw-rig rays (0ms setup overhead!)
             db = targets.get("depth")
             if db is None or not (db >= 0).any():
                 return None
-            raw_calibs = export_camera_calib(raw_rig)
-            dec = FeedForward3DGSDecoder(raw_rig, raw_calibs, tuple(self.config["image_hw"]), feature_stride=4, ground_z=surround.ground_z)
+            dec = self._raw_decoders[row["rig_id"]]
             pts_list = []
             for ci in range(len(raw_rig["cameras"])):
                 v = dec.ray_valid[ci] & (db[ci] >= 0) & (db[ci] < len(self.depth_centers))
@@ -684,9 +797,8 @@ class DemoRuntime:
                 return None
             points = np.concatenate(pts_list, axis=0)
 
-        # Exclude dynamic objects from visibility occlusion & moving riders/peds from azimuthal r(theta) wall shaping
+        # Exclude ALL dynamic objects (vehicles, riders, pedestrians) from visibility, 2.5D curb surface, & r(theta) walls
         static_points = points
-        wall_points = points
         sem = targets.get("semantics")
         occ = targets.get("occupancy")
         if sem is not None and occ is not None:
@@ -702,14 +814,10 @@ class DemoRuntime:
             if dyn_2d.any():
                 dyn_dil = binary_dilation(dyn_2d, iterations=3)
                 static_points = points[~(in_grid & dyn_dil[yi, xi])]
-            mob_2d = ((occ == 1) & (sem >= 2)).any(axis=0)
-            if mob_2d.any():
-                mob_dil = binary_dilation(mob_2d, iterations=2)
-                wall_points = points[~(in_grid & mob_dil[yi, xi])]
 
         return pack_foreground_ranges(
             static_points, calib_rig, ground_z=surround.ground_z,
-            static_points=wall_points, ground_plane=surround.ground_plane,
+            static_points=static_points, ground_plane=surround.ground_plane,
         )
 
     def _cache_put(self, store, key, val, limit=6):
@@ -752,9 +860,53 @@ class DemoRuntime:
         self._cache_put(self._splat_cache, key, blob, limit=8)
         return blob
 
+    def depth_surface_binary(self, index, mask_bits, threshold, max_uncertainty, source="pred"):
+        key = (index, tuple(bool(b) for b in mask_bits), round(float(threshold), 3), round(float(max_uncertainty), 3), source)
+        if key in self._depth_surface_cache:
+            return self._depth_surface_cache[key]
+        field_key = key[:-1]
+        if field_key not in self._field_cache:
+            self.infer(index, mask_bits, threshold, max_uncertainty)
+        entry = self._field_cache[field_key]
+        row = self.dataset.rows[index]
+        sr = self.surround[row["drive_id"]]
+        decoder = sr.gs_decoder
+        if source == "gt":
+            blob = decoder.decode_depth_surface_binary(
+                entry["gt_depth_m"], entry["sensor_valid"],
+                ground_plane=sr.ground_plane, gt_valid_mask=entry["gt_depth_valid"],
+            )
+        else:
+            blob = decoder.decode_depth_surface_binary(
+                entry["pred_depth_m"], entry["sensor_valid"],
+                ground_plane=sr.ground_plane, gt_valid_mask=None,
+            )
+        self._cache_put(self._depth_surface_cache, key, blob, limit=8)
+        return blob
+
     @torch.no_grad()
     def infer(self, index, mask_bits, threshold, max_uncertainty):
         row = self.dataset.rows[index]
+        if not self.ai_enabled:
+            empty_pack = {
+                "voxels": [], "counts": {"occupied": 0}, "objects": [], "road_edges": [],
+                "pdc_sectors": [], "corridor": None, "seam_zones": [],
+            }
+            return {
+                "index": index,
+                "frame_id": row["frame_id"],
+                "drive_id": row["drive_id"],
+                "ai_enabled": False,
+                "latency_ms": 0.0,
+                "p_occ_max": 0.5,
+                "threshold": threshold,
+                "max_uncertainty": max_uncertainty,
+                "sensor_valid": [bool(b) for b in mask_bits],
+                "metrics": {"occupancy_iou": None, "coverage": None},
+                "adaptive_bowl": {"inflect_radii": [], "cam_gains": [[1, 1, 1]] * len(mask_bits), "corridor": None, "seam_zones": []},
+                "prediction": empty_pack,
+                "ground_truth": empty_pack,
+            }
         rig = self.dataset.rigs[row["rig_id"]]
         inputs_np = self.dataset.inputs(index)
         images = torch.from_numpy(inputs_np["images"]).unsqueeze(0).to(self.device)
@@ -904,6 +1056,74 @@ class DemoRuntime:
         }
 
 
+def run_calibrate_rig(args):
+    """CLI handler for standardized 6-DoF rig calibration (LiDAR-assisted or targetless camera-only)."""
+    device = torch.device(args.device if (args.device == "cpu" or torch.cuda.is_available()) else "cpu")
+    if args.prepared is not None or args.manifest is not None:
+        config = load_json(args.model)
+        manifest_path = args.manifest or (args.prepared / "manifest.json")
+        manifest = load_manifest(manifest_path, config, allow_synthetic=args.allow_synthetic)
+        rig_id = next(iter(manifest["rigs"]))
+        rig = manifest["rigs"][rig_id]
+        rig["rig_id"] = rig_id
+        rows = [r for r in manifest["frames"] if r["rig_id"] == rig_id]
+        poses = [_load_pose_4x4(args.raw, r) for r in rows]
+        d_edges = depth_edges(config["depth"])
+        depth_centers = (0.5 * (d_edges[:-1] + d_edges[1:])).astype(np.float32)
+        use_targets = (args.mode != "camera-only") and (args.prepared is not None)
+        profile = build_standard_rig_calibration(
+            rig, rows, args.raw, mode=args.mode,
+            load_targets_fn=load_targets if use_targets else None,
+            sample_path_fn=sample_path if use_targets else None,
+            prepared_root=args.prepared if use_targets else None,
+            config=config if use_targets else None,
+            depth_centers=depth_centers if use_targets else None,
+            device=device, poses=poses,
+        )
+    elif args.rig is not None:
+        raw_root = Path(args.raw).resolve()
+        rig_cfg = load_json(args.rig)
+        if "cameras" in rig_cfg:
+            rig = rig_cfg
+        elif "rig" in rig_cfg and "cameras" in rig_cfg["rig"]:
+            rig = rig_cfg["rig"]
+        else:
+            raise ValueError("Standalone --rig JSON must contain 'cameras' or a 'rig.cameras' profile")
+        slot_dirs = {
+            "front": ("front", "CAM_F_F"),
+            "rear": ("rear", "CAM_F_B"),
+            "left": ("left", "CAM_F_L"),
+            "right": ("right", "CAM_F_R"),
+        }
+        cam_files = {}
+        for cam in rig["cameras"]:
+            slot = cam["slot"]
+            found = []
+            for dname in slot_dirs.get(slot, (slot,)):
+                for sub in (raw_root / dname, raw_root / "camera" / dname):
+                    if sub.is_dir():
+                        found.extend(sorted(p for p in sub.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}))
+            if not found:
+                raise ValueError(f"No images found for slot '{slot}' under {raw_root}")
+            cam_files[slot] = found
+        n_frames = min(len(v) for v in cam_files.values())
+        rows = [
+            {"drive_id": "customer_calib", "frame_id": f"{i:06d}",
+             "images": [cam_files[cam["slot"]][i].relative_to(raw_root).as_posix() for cam in rig["cameras"]]}
+            for i in range(n_frames)
+        ]
+        profile = build_standard_rig_calibration(rig, rows, raw_root, mode="camera-only", device=device)
+    else:
+        raise ValueError("Provide --prepared (with manifest) or --rig (standalone camera-only calibration)")
+
+    write_json(args.out, profile)
+    q = profile["quality"]
+    print(
+        f"Saved RigCalibrationProfile ({profile['calibration_mode']}) -> {args.out}\n"
+        f"  ground_plane={profile['ground_plane']} | rot_deg={q['rot_deg']} | calib_dz_cm={q['calib_dz_cm']}"
+    )
+
+
 def serve_demo(args):
     runtime = DemoRuntime(args)
 
@@ -917,7 +1137,11 @@ def serve_demo(args):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                # Navigating or seeking may cancel an image already being sent.
+                self.close_connection = True
 
         def do_GET(self):
             parsed = urlparse(self.path)
@@ -941,6 +1165,9 @@ def serve_demo(args):
                            "application/json; charset=utf-8")
                 return
             idx = max(0, min(len(runtime.dataset) - 1, int(query.get("index", ["0"])[0])))
+            if not runtime.ai_enabled and parsed.path in {"/api/mesh.bin", "/api/splats.bin", "/api/foreground.bin", "/api/depth_surface.bin"}:
+                self._send(HTTPStatus.NOT_FOUND, b"Camera-only replay", "text/plain")
+                return
             if parsed.path == "/api/foreground.bin":
                 try:
                     data = runtime.foreground_binary(idx)
@@ -991,6 +1218,15 @@ def serve_demo(args):
                 if source not in {"pred", "gt"}:
                     source = "pred"
                 self._send(HTTPStatus.OK, runtime.splats_binary(idx, mask_bits, threshold, max_u, source=source),
+                           "application/octet-stream")
+                return
+            if parsed.path == "/api/depth_surface.bin":
+                threshold = float(query.get("threshold", [str(args.threshold)])[0])
+                max_u = float(query.get("max_u", [str(args.max_uncertainty)])[0])
+                source = query.get("source", ["pred"])[0]
+                if source not in {"pred", "gt"}:
+                    source = "pred"
+                self._send(HTTPStatus.OK, runtime.depth_surface_binary(idx, mask_bits, threshold, max_u, source=source),
                            "application/octet-stream")
                 return
             if parsed.path == "/api/infer":
