@@ -374,8 +374,8 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(loaded["rig_id"], "kb4-customer-test")
 
         seams = bowl_seam_calibration(kb4_rig, export_camera_calib(kb4_rig), 0.0)
-        self.assertAlmostEqual(seams["max_offset"], 0.26)
-        self.assertEqual(len(seams["offsets"]), 25)
+        self.assertAlmostEqual(seams["max_offset"], 0.34)
+        self.assertEqual(len(seams["offsets"]), 31)
 
         args = SimpleNamespace(
             raw=self.raw, prepared=self.prepared, model=ROOT / "configs/model/smoke.json",
@@ -468,6 +468,18 @@ class PipelineTest(unittest.TestCase):
         )
         self.assertLessEqual(max_edge, 0.66)
 
+        # 4. Verify Straight-Corridor + Curb-Fillet Bowl mesh integrity on asymmetric city/bridge profiles
+        from omnishield.eval.scene3d import verify_bowl_mesh_integrity
+        for lp, rp in [
+            ((0.0, 0.0, 3.80), (0.0, 0.0, -3.80)),
+            ((0.0, 0.55, 2.15), (0.0, 0.65, -4.65)),
+            ((0.0, 0.68, 4.85), (0.0, 0.58, -2.35)),
+        ]:
+            chk = verify_bowl_mesh_integrity(left_poly=lp, right_poly=rp)
+            self.assertTrue(chk["radial_monotonic"], f"Non-monotonic radii for {lp}, {rp}")
+            self.assertEqual(chk["degenerate_triangles"], 0, f"Degenerate tris for {lp}, {rp}")
+            self.assertEqual(chk["inverted_triangles"], 0, f"Inverted tris for {lp}, {rp}")
+
     def test_fisheye_kb4_4point_pnp_recovers_6dof_pose(self):
         import copy
         from omnishield.eval.scene3d import solve_fisheye_pnp_camera
@@ -504,6 +516,140 @@ class PipelineTest(unittest.TestCase):
         self.assertLess(res["reproj_rmse_px"], 0.1)
         t_rec = np.asarray(res["T_cam_from_ego"], dtype=np.float64)
         self.assertLess(float(np.linalg.norm(t_rec[:3, 3] - t_gt[:3, 3])), 0.01)
+
+    def test_deploy_kb4_intrinsics_mats_lut_and_live_quad_capture(self):
+        import struct
+        import cv2
+        from omnishield.deploy.calibrate_intrinsics import (
+            calibrate_fisheye_kb4,
+            save_camera_intrinsics_json,
+        )
+        from omnishield.deploy.live_capture import Live4CamCapture
+        from omnishield.deploy.mat_and_lut import export_fixed_lut, generate_calibration_mats
+        from omnishield.eval.scene3d import export_bowl_spec, export_camera_calib
+
+        # 1. Synthetic KB4 fisheye checkerboard calibration recovery
+        board = (7, 5)
+        sq_m = 0.05
+        w_im, h_im = 640, 400
+        k_gt = np.array([[260.0, 0.0, 320.0], [0.0, 260.0, 200.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+        d_gt = np.array([0.04, -0.015, 0.003, -0.0005], dtype=np.float64)
+
+        # Render a crisp synthetic checkerboard texture (with white border) and warp via KB4 fisheye projection
+        cols_sq, rows_sq = board[0] + 1, board[1] + 1
+        cell = 40
+        pad = 40
+        pat = np.full((rows_sq * cell + 2 * pad, cols_sq * cell + 2 * pad), 245, dtype=np.uint8)
+        for r in range(rows_sq):
+            for c in range(cols_sq):
+                if (r + c) % 2 == 0:
+                    pat[pad + r * cell : pad + (r + 1) * cell, pad + c * cell : pad + (c + 1) * cell] = 15
+
+        # Precompute pixel rays in undistorted normalized coords using cv2.fisheye.undistortPoints
+        uu, vv = np.meshgrid(np.arange(w_im, dtype=np.float64), np.arange(h_im, dtype=np.float64))
+        pts_px = np.stack([uu, vv], axis=-1).reshape(-1, 1, 2)
+        rays = cv2.fisheye.undistortPoints(pts_px, k_gt, d_gt).reshape(h_im, w_im, 2)
+        rays_3d = np.concatenate([rays, np.ones((h_im, w_im, 1), dtype=np.float64)], axis=-1)
+
+        poses = [
+            ([0.0, 0.0, 0.0], [-0.18, -0.12, 0.55]),
+            ([0.28, -0.15, 0.08], [-0.22, -0.10, 0.62]),
+            ([-0.25, 0.20, -0.10], [-0.14, -0.16, 0.60]),
+            ([0.15, 0.30, 0.18], [-0.20, -0.08, 0.68]),
+            ([-0.20, -0.28, -0.15], [-0.12, -0.14, 0.58]),
+            ([0.32, 0.12, -0.06], [-0.24, -0.13, 0.64]),
+            ([-0.10, 0.25, 0.22], [-0.16, -0.15, 0.66]),
+            ([0.18, -0.25, 0.14], [-0.21, -0.11, 0.56]),
+            ([-0.28, -0.12, 0.09], [-0.15, -0.12, 0.63]),
+        ]
+        synth_imgs = []
+        for rvec_l, tvec_l in poses:
+            rmat, _ = cv2.Rodrigues(np.asarray(rvec_l, dtype=np.float64))
+            tvec = np.asarray(tvec_l, dtype=np.float64)
+            # Plane z_board = 0 in camera frame: n = rmat[:, 2], d_plane = n . tvec
+            n = rmat[:, 2]
+            denom = np.einsum("hwc,c->hw", rays_3d, n)
+            lam = np.where(np.abs(denom) > 1e-6, float(n @ tvec) / np.where(np.abs(denom) > 1e-6, denom, 1.0), -1.0)
+            p_cam = rays_3d * lam[..., None]
+            p_b = np.einsum("ij,hwj->hwi", rmat.T, p_cam - tvec)
+            bx = (p_b[..., 0] / sq_m + 1.0) * cell + pad
+            by = (p_b[..., 1] / sq_m + 1.0) * cell + pad
+            remapped = cv2.remap(
+                pat, bx.astype(np.float32), by.astype(np.float32),
+                interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=180,
+            )
+            remapped[lam <= 0] = 180
+            synth_imgs.append(cv2.cvtColor(remapped, cv2.COLOR_GRAY2BGR))
+
+        intr = calibrate_fisheye_kb4(synth_imgs, board_size=board, square_size_m=sq_m, max_reproj_px=2.0)
+        self.assertLess(intr["reprojection_rmse_px"], 0.6)
+        self.assertAlmostEqual(intr["fx"], 260.0, delta=6.0)
+        self.assertAlmostEqual(intr["cx"], 320.0, delta=4.0)
+        intr_path = save_camera_intrinsics_json(self.prepared / "Camera_Intrinsics.json", intr, slot="all")
+        self.assertTrue(intr_path.is_file())
+        saved_intr = load_json(intr_path)
+        self.assertIn("CAM_F_F", saved_intr)
+        self.assertEqual(len(saved_intr["CAM_F_F"]["distortion"]), 4)
+
+        # 2. Printable garage calibration mats generator
+        mats_dir = self.prepared / "mats_test"
+        mats_res = generate_calibration_mats(mats_dir, vehicle_length_m=4.75, vehicle_width_m=1.934, png_px=240)
+        for name in ("mat_FL.svg", "mat_FR.svg", "mat_RL.svg", "mat_RR.svg",
+                     "mat_FL.png", "mat_FR.png", "mat_RL.png", "mat_RR.png",
+                     "garage_layout_blueprint.svg", "mat_world_coords.json"):
+            self.assertTrue((mats_dir / name).is_file(), f"Missing generated mat artifact: {name}")
+        self.assertEqual(len(mats_res["layout"]["mats"]), 4)
+
+        # 3. Fixed production 2D & 3D LUT exporter
+        rig = next(iter(self.manifest["rigs"].values()))
+        profile = {
+            "schema_version": 1,
+            "ground_plane": [0.0, 0.0, 0.0],
+            "bowl_spec": export_bowl_spec(),
+            "rig": rig,
+            "camera_calib": export_camera_calib(rig),
+        }
+        lut_dir = self.prepared / "lut_test"
+        lut_res = export_fixed_lut(profile, lut_dir, top2d_hw=(64, 48), rings=16, sectors=32)
+        bin2 = (lut_dir / "avm_2d_lut.bin").read_bytes()
+        bin3 = (lut_dir / "avm_3d_bowl_lut.bin").read_bytes()
+        self.assertEqual(bin2[:4], b"AVM2")
+        self.assertEqual(bin3[:4], b"AVM3")
+        m2, w2, h2, nc2 = struct.unpack("<4sIII", bin2[:16])
+        self.assertEqual((w2, h2, nc2), (48, 64, 4))
+        self.assertEqual(lut_res["lut_3d_verts"], 16 * 32)
+        self.assertTrue((lut_dir / "avm_lut_spec.h").is_file())
+        self.assertTrue((lut_dir / "avm_2d_lut.npz").is_file())
+        self.assertTrue((lut_dir / "avm_3d_bowl_lut.npz").is_file())
+
+        # 4. Live 4-Cam 2x2 quad-split capture slices synthetic video into 4 distinct JPEGs
+        quad_vid = self.prepared / "quad_test.avi"
+        fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+        vw = cv2.VideoWriter(str(quad_vid), fourcc, 15.0, (320, 180))
+        frame = np.zeros((180, 320, 3), dtype=np.uint8)
+        frame[0:90, 0:160] = (20, 20, 220)     # TL -> cam 0 (red)
+        frame[0:90, 160:320] = (20, 220, 20)   # TR -> cam 1 (green)
+        frame[90:180, 0:160] = (220, 20, 20)   # BL -> cam 2 (blue)
+        frame[90:180, 160:320] = (20, 220, 220)  # BR -> cam 3 (yellow)
+        for _ in range(5):
+            vw.write(frame)
+        vw.release()
+
+        cap = Live4CamCapture(quad_source=str(quad_vid), quad_order=(0, 1, 2, 3))
+        cap.start()
+        try:
+            import time
+            deadline = time.time() + 3.0
+            while cap._frame_seq < 1 and time.time() < deadline:
+                time.sleep(0.02)
+            self.assertGreaterEqual(cap._frame_seq, 1)
+            for ci in range(4):
+                jpg = cap.get_jpeg(ci)
+                self.assertGreater(len(jpg), 200)
+                dec = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                self.assertEqual(dec.shape[:2], (90, 160))
+        finally:
+            cap.stop()
 
 
 if __name__ == "__main__":

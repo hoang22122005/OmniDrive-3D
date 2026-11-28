@@ -596,7 +596,12 @@ class DemoRuntime:
                     )
 
             calib_rig, rot_deg, base_plane, clip_planes, cache_file, cache_dirty = rig_calib_cache[rig_id]
-            if is_real_phenikaa:
+            plane_quality = {}
+            if external_profile is not None:
+                # Honor the calibrated profile's exact ground plane rather than overwriting with stale clip cache
+                road_plane = list(base_plane)
+                plane_quality = external_profile.get("road_plane_validation", {"source": "calibrated_profile"})
+            elif is_real_phenikaa:
                 if drive_id in clip_planes:
                     road_plane = clip_planes[drive_id]
                 else:
@@ -605,10 +610,6 @@ class DemoRuntime:
                     )
                     clip_planes[drive_id] = road_plane
                     rig_calib_cache[rig_id][5] = True
-            else:
-                road_plane = base_plane
-            plane_quality = {}
-            if is_real_phenikaa:
                 scan_ids = [row.get("lidar") for row in clip_rows]
                 signature = fingerprint([rig, scan_ids])
                 plane_cache = args.prepared / f".road_plane_v1_{signature}.json"
@@ -629,6 +630,8 @@ class DemoRuntime:
                     road_plane, plane_quality = measured
                 else:
                     plane_quality = {"source": "prepared_depth_or_rig"}
+            else:
+                road_plane = base_plane
             self.calibrated_rigs[drive_id] = calib_rig
             sr = SurroundViewRenderer(calib_rig, device, tuple(config["image_hw"]), ground_z=road_plane[2], ground_plane=road_plane)
             sr.guidelines["road_plane_validation"] = plane_quality
@@ -1265,7 +1268,7 @@ def serve_demo(args):
 
         def do_POST(self):
             parsed = urlparse(self.path)
-            if parsed.path not in {"/api/save_calibration", "/api/calibrate_pnp", "/api/auto_calibrate"}:
+            if parsed.path not in {"/api/save_calibration", "/api/calibrate_pnp", "/api/auto_calibrate", "/api/export_lut"}:
                 self._send(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
                 return
             try:
@@ -1276,6 +1279,33 @@ def serve_demo(args):
                 first_drive = runtime.dataset.rows[0]["drive_id"]
                 active_rig = runtime.calibrated_rigs[first_drive]
                 active_gp = runtime.surround[first_drive].ground_plane
+
+                if parsed.path == "/api/export_lut":
+                    from omnishield.deploy.mat_and_lut import export_fixed_lut
+
+                    export_rig = copy.deepcopy(active_rig)
+                    cam_calibs = payload.get("camera_calib")
+                    if isinstance(cam_calibs, list) and len(cam_calibs) == len(export_rig["cameras"]):
+                        for cam, cc in zip(export_rig["cameras"], cam_calibs, strict=True):
+                            cam["T_cam_from_ego"] = np.asarray(cc["t_cam_from_ego"], dtype=np.float64).reshape(4, 4).tolist()
+                    gp = payload.get("ground_plane")
+                    gp_list = [round(float(v), 6) for v in gp] if isinstance(gp, list) and len(gp) == 3 else list(active_gp)
+                    profile = {
+                        "schema_version": 1,
+                        "calibration_mode": "exported_from_ui",
+                        "rig_id": export_rig.get("rig_id", "default-rig"),
+                        "ground_plane": gp_list,
+                        "bowl_spec": export_bowl_spec(),
+                        "rig": export_rig,
+                        "camera_calib": export_camera_calib(export_rig),
+                    }
+                    summary = export_fixed_lut(profile, Path("runs/lut_export"))
+                    self._send(
+                        HTTPStatus.OK,
+                        json.dumps({"ok": True, **summary}, ensure_ascii=False).encode("utf-8"),
+                        "application/json; charset=utf-8",
+                    )
+                    return
 
                 if parsed.path == "/api/calibrate_pnp":
                     ci = int(payload.get("cam_index", 0))
@@ -1310,7 +1340,8 @@ def serve_demo(args):
                         raw_rig, runtime.dataset.rows, runtime.args.raw,
                         mode="camera-only", device=runtime.device, poses=runtime.poses,
                     )
-                    out_path = Path(args.calibrated_rig) if getattr(args, "calibrated_rig", None) else Path("runs/calib_camera_only_profile.json")
+                    cfg_rig_path = Path(args.calibrated_rig) if getattr(args, "calibrated_rig", None) else None
+                    out_path = cfg_rig_path if (cfg_rig_path and "camera_only" in cfg_rig_path.name) else Path("runs/calib_camera_only_profile.json")
                     write_json(out_path, profile)
                     for did in list(runtime.calibrated_rigs):
                         runtime.calibrated_rigs[did] = copy.deepcopy(profile["rig"])

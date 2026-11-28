@@ -108,6 +108,52 @@ def cli():
     cal_rig.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     cal_rig.add_argument("--allow-synthetic", action="store_true")
     cal_rig.add_argument("--out", type=Path, required=True)
+
+    live_cmd = commands.add_parser("live", help="Run real-time 4-camera hardware AVM & garage PnP calibration server")
+    live_cmd.add_argument("--profile", type=Path, default=ROOT / "runs/calib_lidar_profile.json",
+                          help="RigCalibrationProfile JSON (created via garage PnP or calibrate-rig)")
+    live_cmd.add_argument("--sources", type=str, default=None,
+                          help="Comma-separated 4 camera sources in order front,rear,left,right (e.g. '0,1,2,3' or '/dev/video0,...' or 4 video/RTSP paths)")
+    live_cmd.add_argument("--quad", type=str, default=None,
+                          help="Single 2x2 quad-split AHD USB capture card index or video path (alternative to --sources)")
+    live_cmd.add_argument("--quad-order", type=str, default="0,1,2,3",
+                          help="Tile mapping from 2x2 (TL=0,TR=1,BL=2,BR=3) to front,rear,left,right (default: 0,1,2,3)")
+    live_cmd.add_argument("--width", type=int, default=1280)
+    live_cmd.add_argument("--height", type=int, default=720)
+    live_cmd.add_argument("--fps", type=int, default=30)
+    live_cmd.add_argument("--lut-out", type=Path, default=ROOT / "runs/lut_export")
+    live_cmd.add_argument("--host", default="127.0.0.1")
+    live_cmd.add_argument("--port", type=int, default=8765)
+    live_cmd.add_argument("--open", action="store_true")
+
+    intr_cmd = commands.add_parser("calib-intrinsics", help="One-time KB4 fisheye intrinsic calibration on a checkerboard")
+    intr_cmd.add_argument("--images", type=Path, default=None, help="Directory of checkerboard images")
+    intr_cmd.add_argument("--video", type=Path, default=None, help="Video file moving checkerboard across 190 deg lens")
+    intr_cmd.add_argument("--camera", type=int, default=None, help="Live camera index (press SPACE to capture, Q to finish)")
+    intr_cmd.add_argument("--cols", type=int, default=9, help="Inner checkerboard corners horizontally")
+    intr_cmd.add_argument("--rows", type=int, default=6, help="Inner checkerboard corners vertically")
+    intr_cmd.add_argument("--square-mm", type=float, default=40.0, help="Square edge size in millimeters")
+    intr_cmd.add_argument("--slot", choices=("all", "front", "rear", "left", "right"), default="all",
+                          help="Apply calibrated lens to 'all' 4 cameras (identical batch) or a specific slot")
+    intr_cmd.add_argument("--max-views", type=int, default=35)
+    intr_cmd.add_argument("--stride", type=int, default=10, help="Frame stride when sampling from --video")
+    intr_cmd.add_argument("--max-rmse", type=float, default=0.85, help="Max reprojection RMSE (px) warning threshold")
+    intr_cmd.add_argument("--out", type=Path, default=ROOT / "runs/Camera_Intrinsics.json")
+    intr_cmd.add_argument("--verify-img", type=Path, default=None, help="Optional side-by-side raw vs undistorted verification JPEG")
+
+    mats_cmd = commands.add_parser("make-mats", help="Generate printable 1:1 garage calibration mats (SVG+PNG) and placement blueprint")
+    mats_cmd.add_argument("--out", type=Path, default=ROOT / "runs/garage_mats")
+    mats_cmd.add_argument("--length", type=float, default=4.75, help="Vehicle length in meters (default: 4.75)")
+    mats_cmd.add_argument("--width", type=float, default=1.934, help="Vehicle width in meters (default: 1.934)")
+    mats_cmd.add_argument("--x-center", type=float, default=-0.024, help="Vehicle geometric X center offset in ego frame (m)")
+    mats_cmd.add_argument("--mat-size", type=float, default=1.20, help="Square calibration mat side in meters (default: 1.20)")
+    mats_cmd.add_argument("--png-px", type=int, default=1200, help="Raster PNG side in pixels (default: 1200)")
+
+    lut_cmd = commands.add_parser("export-lut", help="Bake fixed 2D Top-Down & 3D Bowl LUTs (.bin/.npz/.h) for embedded 60 FPS deployment")
+    lut_cmd.add_argument("--profile", type=Path, default=ROOT / "runs/calib_lidar_profile.json")
+    lut_cmd.add_argument("--out", type=Path, default=ROOT / "runs/lut_export")
+    lut_cmd.add_argument("--width-2d", type=int, default=384)
+    lut_cmd.add_argument("--height-2d", type=int, default=512)
     return parser.parse_args()
 
 
@@ -132,6 +178,26 @@ def main():
         from omnishield.eval.demo import run_calibrate_rig
 
         run_calibrate_rig(args)
+        return
+    if args.action == "live":
+        from omnishield.deploy.live_capture import serve_live_4cam
+
+        serve_live_4cam(args)
+        return
+    if args.action == "calib-intrinsics":
+        from omnishield.deploy.calibrate_intrinsics import run_calib_intrinsics_cli
+
+        run_calib_intrinsics_cli(args)
+        return
+    if args.action == "make-mats":
+        from omnishield.deploy.mat_and_lut import run_make_mats_cli
+
+        run_make_mats_cli(args)
+        return
+    if args.action == "export-lut":
+        from omnishield.deploy.mat_and_lut import run_export_lut_cli
+
+        run_export_lut_cli(args)
         return
     if args.action == "fixture":
         synthetic(args.raw, args.prepared, load_json(ROOT / "configs/model/smoke.json"))

@@ -43,21 +43,28 @@ VF8_VEHICLE_SPEC = {
     "mirror_z_m": 1.029,
 }
 
-# Corridor-aligned superellipse (p=3.0) flat road extending ~5m ahead/behind bumpers, followed by gentle tangent wall.
-BOWL_FLAT_RX = 7.20
-BOWL_FLAT_RY = 3.80
-BOWL_FLAT_POWER = 3.0
-BOWL_PAD_X = 8.00
-BOWL_PAD_Y = 6.50
-BOWL_WALL_HEIGHT = 3.20
-BOWL_WALL_POWER = 2.2
-BOWL_FLAT_SPLIT = 0.52
-BOWL_SEAM_X_SHIFT = 1.00
-BOWL_SEAM_X_SCALE = 1.65
+# OEM Wide Gentle Quarter-Ellipse Bowl + Independent Low Curb Terrace:
+#   - Wide symmetric flat floor (rx=11.50m, ry=4.80m, p=8.0) keeps 2-3 full lanes razor-flat & straight!
+#   - Wide gentle convex outer wall (pad_x=10.50m, pad_y=9.00m -> 27.6m wide arena, H=5.40m -> gentle ~35 deg slope,
+#     eliminating steep canyon walls and virtual camera wall clipping!).
+#   - Independent low curb terrace (<=0.38m) lifts ONLY verified continuous curbs at Y_left / -Y_right without
+#     pulling the outer bowl wall inward or bending adjacent lanes/speed bumps!
+BOWL_FLAT_RX = 11.50
+BOWL_FLAT_RY = 4.80
+BOWL_FLAT_POWER = 8.0
+BOWL_PAD_X = 12.00
+BOWL_PAD_Y = 10.50
+BOWL_WALL_HEIGHT = 10.80
+BOWL_WALL_POWER = 2.00
+BOWL_RAD_POWER = 1.00
+BOWL_WALL_SHAPE = "quarter_ellipse"
+BOWL_FLAT_SPLIT = 0.50
+BOWL_SEAM_X_SHIFT = -0.024
+BOWL_SEAM_X_SCALE = 1.35
 BOWL_BASE_RX = BOWL_FLAT_RX
 BOWL_BASE_RY = BOWL_FLAT_RY
 BOWL_MIN_RX = 3.40
-BOWL_MIN_RY = 2.15
+BOWL_MIN_RY = 1.85
 BOWL_OUTER_PAD_X = BOWL_PAD_X
 BOWL_OUTER_PAD_Y = BOWL_PAD_Y
 
@@ -121,10 +128,13 @@ def export_bowl_spec():
     return {
         "flat_rx": BOWL_FLAT_RX,
         "flat_ry": BOWL_FLAT_RY,
+        "flat_power": BOWL_FLAT_POWER,
         "pad_x": BOWL_PAD_X,
         "pad_y": BOWL_PAD_Y,
         "wall_height": BOWL_WALL_HEIGHT,
         "wall_power": BOWL_WALL_POWER,
+        "rad_power": BOWL_RAD_POWER,
+        "wall_shape": BOWL_WALL_SHAPE,
         "flat_split": BOWL_FLAT_SPLIT,
         "seam_x_shift": BOWL_SEAM_X_SHIFT,
         "seam_x_scale": BOWL_SEAM_X_SCALE,
@@ -314,10 +324,11 @@ def bowl_min_radii(angles):
 
 
 def build_adaptive_bowl_template(ground_z=0.0, n_rings=84, n_segs=160):
-    """Build closed 360-deg parametric Stadium-Bowl mesh resolving 2.5D curb steps cleanly."""
-    # Dense inner floor rings (0..BOWL_FLAT_SPLIT, <10cm radial step) + smooth wall rings
-    t_floor = np.linspace(0.0, BOWL_FLAT_SPLIT, 56, endpoint=False, dtype=np.float32)
-    t_wall = np.linspace(BOWL_FLAT_SPLIT, 1.0, n_rings - 56, dtype=np.float32)
+    """Build closed 360-deg Wide Gentle Bowl + Fine Floor Rings resolving low curb terraces smoothly (<9cm step)."""
+    n_floor = min(52, max(28, int(round(n_rings * 0.62))))
+    t_floor = np.linspace(0.0, BOWL_FLAT_SPLIT, n_floor, endpoint=False, dtype=np.float32)
+    u_wall = np.linspace(0.0, 1.0, n_rings - n_floor, dtype=np.float32) ** 1.25
+    t_wall = (BOWL_FLAT_SPLIT + (1.0 - BOWL_FLAT_SPLIT) * u_wall).astype(np.float32)
     ts = np.concatenate([t_floor, t_wall])
     angles = np.linspace(0.0, 2.0 * np.pi, n_segs, endpoint=False, dtype=np.float32)
     tt, aa = np.meshgrid(ts, angles, indexing="ij")
@@ -341,23 +352,26 @@ def build_adaptive_bowl_template(ground_z=0.0, n_rings=84, n_segs=160):
 
 def verify_bowl_mesh_integrity(
     ground_plane=(0.0, 0.0, 0.0), wall_ranges=None, polar_height=None,
-    left_poly=(0.0, 0.0, 2.25), right_poly=(0.0, 0.0, -2.25),
+    left_poly=(0.0, 0.34, 2.25), right_poly=(0.0, 0.0, -4.80),
     adapt_strength=1.0, n_rings=84, n_segs=160,
 ):
-    """Verify 0 inverted/degenerate triangles and strict radial monotonicity on the adaptive bowl."""
+    """Verify 0 inverted/degenerate triangles and strict radial monotonicity on the Wide Bowl + Curb Terrace."""
     pa, pb, pc = [float(v) for v in ground_plane]
-    t_floor = np.linspace(0.0, BOWL_FLAT_SPLIT, 56, endpoint=False, dtype=np.float64)
-    t_wall = np.linspace(BOWL_FLAT_SPLIT, 1.0, n_rings - 56, dtype=np.float64)
+    n_floor = min(52, max(28, int(round(n_rings * 0.62))))
+    t_floor = np.linspace(0.0, BOWL_FLAT_SPLIT, n_floor, endpoint=False, dtype=np.float64)
+    u_wall = np.linspace(0.0, 1.0, n_rings - n_floor, dtype=np.float64) ** 1.25
+    t_wall = BOWL_FLAT_SPLIT + (1.0 - BOWL_FLAT_SPLIT) * u_wall
     ts = np.concatenate([t_floor, t_wall])
     angles = np.linspace(0.0, 2.0 * np.pi, n_segs, endpoint=False, dtype=np.float64)
     tt, aa = np.meshgrid(ts, angles, indexing="ij")
     ca, sa = np.cos(aa), np.sin(aa)
 
-    smooth_sa = np.clip((sa + 0.30) / 0.60, 0.0, 1.0)
-    smooth_sa = smooth_sa * smooth_sa * (3.0 - 2.0 * smooth_sa)
-    side_offset = (-right_poly[2]) * (1.0 - smooth_sa) + left_poly[2] * smooth_sa - 2.25
-    ry = BOWL_FLAT_RY + np.clip(side_offset, -0.35, 0.55)
-    r_flat_base = _superellipse_radius(ca, sa, BOWL_FLAT_RX, ry)
+    # Outer bowl ALWAYS stays wide & symmetric (BOWL_FLAT_RX x BOWL_FLAT_RY) so lanes never get pinched!
+    cur_l = float(np.clip(left_poly[2], 1.85, 5.50))
+    cur_r = float(np.clip(-right_poly[2], 1.85, 5.50))
+    h_l = float(np.clip(left_poly[1], 0.0, 0.38))
+    h_r = float(np.clip(right_poly[1], 0.0, 0.38))
+    r_flat_base = _superellipse_radius(ca, sa, BOWL_FLAT_RX, BOWL_FLAT_RY, BOWL_FLAT_POWER)
     r_flat = r_flat_base.copy()
     depth_wall = np.zeros_like(aa)
 
@@ -386,9 +400,10 @@ def verify_bowl_mesh_integrity(
 
     r_pad = 1.0 / np.hypot(ca / BOWL_PAD_X, sa / BOWL_PAD_Y)
     wall_u = np.where(tt <= BOWL_FLAT_SPLIT, 0.0, (tt - BOWL_FLAT_SPLIT) / (1.0 - BOWL_FLAT_SPLIT))
+    phi = wall_u * (0.5 * np.pi)
     r_span = np.maximum((r_flat_base + r_pad) - r_flat, 0.5)
     r_floor = 0.05 + (r_flat - 0.05) * (tt / BOWL_FLAT_SPLIT)
-    r_wall = r_flat + r_span * (wall_u * (1.0 - depth_wall * 0.45) + (wall_u ** 1.38) * (depth_wall * 0.45))
+    r_wall = r_flat + r_span * (np.sin(phi) * (1.0 - depth_wall * 0.45) + (wall_u ** 1.38) * (depth_wall * 0.45))
     r = np.where(tt <= BOWL_FLAT_SPLIT, r_floor, r_wall)
 
     radial_monotonic = bool(np.all(np.diff(r, axis=0) > 1e-6))
@@ -397,10 +412,18 @@ def verify_bowl_mesh_integrity(
     road_z = pa * x + pb * y + pc
     wall_z = np.where(
         wall_u > 0.0,
-        (BOWL_WALL_HEIGHT * (wall_u ** BOWL_WALL_POWER)) * (1.0 - depth_wall * 0.45)
+        (BOWL_WALL_HEIGHT * (1.0 - np.cos(phi))) * (1.0 - depth_wall * 0.45)
         + (BOWL_WALL_HEIGHT * (wall_u ** 1.25)) * (depth_wall * 0.45),
         0.0,
     )
+    # Decoupled low curb terrace (<= 0.38m) that never pulls the wide 4.80m outer bowl wall inward!
+    # Monotonic in |y| (never slopes downward along |x|) -> 0 inverted triangles across all asymmetric configs!
+    fw = np.clip((wall_u - 0.20) / 0.45, 0.0, 1.0)
+    fade_w = 1.0 - fw * fw * (3.0 - 2.0 * fw)
+    tl_u = np.clip((y - (cur_l - 0.05)) / 0.35, 0.0, 1.0)
+    tr_u = np.clip((-y - (cur_r - 0.05)) / 0.35, 0.0, 1.0)
+    curb_terrace = np.maximum(tl_u * tl_u * (3.0 - 2.0 * tl_u) * h_l, tr_u * tr_u * (3.0 - 2.0 * tr_u) * h_r) * fade_w
+    wall_z = wall_z + curb_terrace
     curb_z = np.zeros_like(x)
     if polar_height is not None:
         ph = np.asarray(polar_height, dtype=np.float64)
@@ -1106,12 +1129,12 @@ def export_camera_calib(rig):
     return out
 
 
-def bowl_seam_calibration(rig, calibs, ground_z, rings=20, candidates=25, ground_plane=None):
+def bowl_seam_calibration(rig, calibs, ground_z, rings=20, candidates=31, ground_plane=None):
     """Project candidate seam locations on the EXACT unified 3D Bowl surface into adjacent camera pairs."""
     by_slot = {cam["slot"]: i for i, cam in enumerate(rig["cameras"])}
     order = [by_slot[slot] for slot in ("front", "left", "rear", "right")]
     pa, pb, pc = [float(v) for v in ground_plane] if ground_plane is not None else (0.0, 0.0, float(ground_z))
-    max_off = 0.26
+    max_off = 0.34
     offsets = np.linspace(-max_off, max_off, candidates)
     displacements = np.array([-0.24, -0.12, 0.0, 0.12, 0.24])
     ring = np.linspace(0.0, 1.0, rings)[:, None]
@@ -1126,16 +1149,17 @@ def bowl_seam_calibration(rig, calibs, ground_z, rings=20, candidates=25, ground
         ca, sa = np.cos(angle), np.sin(angle)
         flat = _superellipse_radius(ca, sa, BOWL_FLAT_RX, BOWL_FLAT_RY)
         pad = 1.0 / np.hypot(ca / BOWL_PAD_X, sa / BOWL_PAD_Y)
+        phi = wall * (0.5 * np.pi)
         radius = np.where(ring <= BOWL_FLAT_SPLIT, 0.05 + (flat - 0.05) * ring / BOWL_FLAT_SPLIT,
-                          flat + pad * wall)
+                          flat + pad * np.sin(phi))
         # Apply seam anchor shift cleanly on ego x so DP evaluates the true seam locus!
         pts_x = radius * ca + BOWL_SEAM_X_SHIFT * np.clip(ring / BOWL_FLAT_SPLIT, 0.0, 1.0)
         pts_y = radius * sa
         base_z = pa * pts_x + pb * pts_y + pc
-        z = base_z + BOWL_WALL_HEIGHT * (wall ** BOWL_WALL_POWER)
+        z = base_z + BOWL_WALL_HEIGHT * (1.0 - np.cos(phi))
         points = np.stack([pts_x, pts_y, z], axis=-1)
-        dr = pad
-        dz = np.broadcast_to(BOWL_WALL_HEIGHT * BOWL_WALL_POWER * np.maximum(wall, 1e-4) ** (BOWL_WALL_POWER - 1.0), radius.shape)
+        dr = pad * np.cos(phi)
+        dz = np.broadcast_to(BOWL_WALL_HEIGHT * np.sin(phi), radius.shape)
         normal = np.stack([-dz * ca, -dz * sa, np.broadcast_to(dr, radius.shape)], axis=-1)
         normal /= np.maximum(np.linalg.norm(normal, axis=-1, keepdims=True), 1e-6)
         hypotheses = (points[None] + displacements[:, None, None, None] * normal).reshape(-1, 3)
@@ -1381,7 +1405,8 @@ def measure_seam_parallax_report(rig, ground_plane=(0.0, 0.0, 0.0)):
         r = np.hypot(pts[:, 0], pts[:, 1])
         r_flat = _superellipse_radius(ca, sa, BOWL_FLAT_RX, BOWL_FLAT_RY)
         r_pad = 1.0 / np.hypot(ca / BOWL_PAD_X, sa / BOWL_PAD_Y)
-        u = np.clip((r - r_flat) / np.maximum(r_pad, 0.5), 0.0, 1.0)
+        r_frac = np.clip((r - r_flat) / np.maximum(r_pad, 0.5), 0.0, 1.0)
+        u = r_frac ** (1.0 / BOWL_RAD_POWER)
         bz = (pa * pts[:, 0] + pb * pts[:, 1] + pc) + np.where(r <= r_flat, 0.0, BOWL_WALL_HEIGHT * (u ** BOWL_WALL_POWER))
         diff = pts[:, 2] - bz
         idx = np.where(diff <= 0)[0]
@@ -2039,15 +2064,90 @@ def compute_corridor_profile(occupancy, dyn_mask, grid, rig, p_occ=None, is_pred
         a = float(np.clip(a, -0.018, 0.018))
         b = float(np.clip(b, -0.14, 0.14))
         if side_sign > 0:
-            c = float(np.clip(c, 1.95, 2.75))
+            c = float(np.clip(c, 1.75, 5.40))
         else:
-            c = float(np.clip(c, -2.75, -1.95))
+            c = float(np.clip(c, -5.40, -1.75))
         return [round(a, 6), round(b, 5), round(c, 4)]
 
-    # Tight symmetric default (+2.25m / -2.25m) keeps left/right vehicles at natural 1:1 scale
-    left_poly = fit_side(1.0, 2.25)
-    right_poly = fit_side(-1.0, -2.25)
+    # Wide open corridor fallback (+4.55m / -4.55m) keeps multi-lane roads flat unless a real curb/railing is close
+    left_poly = fit_side(1.0, 4.55)
+    right_poly = fit_side(-1.0, -4.55)
     return {"left_poly": left_poly, "right_poly": right_poly}
+
+
+def estimate_corridor_4cam(rgb_images, rig, ground_plane=(0.0, 0.0, 0.0), default_y=4.60):
+    """Camera-only 6.6m Front+Rear stereo ZNCC+Gradient asymmetric corridor estimator (zero LiDAR/AI)."""
+    import cv2
+
+    cams = rig["cameras"]
+    pa, pb, pc = [float(v) for v in ground_plane]
+    w_s, h_s = 320, 180
+    bgrs, grads = [], []
+    for im in rgb_images:
+        small = cv2.resize(np.asarray(im, dtype=np.float32), (w_s, h_s), interpolation=cv2.INTER_AREA)
+        gray = small.mean(axis=2) if small.ndim == 3 else small
+        gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        bgrs.append(small)
+        grads.append(np.hypot(gx, gy))
+
+    y_cands = np.arange(1.80, 5.45, 0.12)
+    xs_f = np.linspace(1.8, 5.2, 16)
+    xs_b = np.linspace(-5.0, -1.8, 16)
+    zs = np.array([0.20, 0.28, 0.36, 0.44, 0.96, 1.10])
+
+    def solve_side(side_sign):
+        side_ci = 2 if side_sign > 0 else 3
+        scores = np.full(len(y_cands), -1.0, dtype=np.float64)
+        for yi, cy in enumerate(y_cands):
+            yv = side_sign * cy
+            pair_vals = []
+            for ci_a, xs_arr in ((0, xs_f), (1, xs_b)):
+                gx, gz = np.meshgrid(xs_arr, zs)
+                pts = np.column_stack([gx.ravel(), np.full(gx.size, yv), gz.ravel() + pa * gx.ravel() + pb * yv + pc])
+                ca, cb = cams[ci_a], cams[side_ci]
+                uva, _, va = project(pts, ca, ca["image_hw"])
+                uvb, _, vb = project(pts, cb, cb["image_hw"])
+                for co, uv, v in ((ca, uva, va), (cb, uvb, vb)):
+                    vc = co.get("valid_circle", [0, 0, -1])
+                    if vc[2] > 0:
+                        v &= np.hypot(uv[:, 0] - vc[0], uv[:, 1] - vc[1]) < vc[2] - 14
+                    v &= (uv[:, 0] > 12) & (uv[:, 0] < co["image_hw"][1] - 12) & (uv[:, 1] > 12) & (uv[:, 1] < co["image_hw"][0] - 12)
+                ok = va & vb
+                if int(ok.sum()) < 10:
+                    pair_vals.append(None)
+                    continue
+                ua = (uva[ok, 0] / ca["image_hw"][1] * w_s).reshape(-1, 1).astype(np.float32)
+                vay = (uva[ok, 1] / ca["image_hw"][0] * h_s).reshape(-1, 1).astype(np.float32)
+                ub = (uvb[ok, 0] / cb["image_hw"][1] * w_s).reshape(-1, 1).astype(np.float32)
+                vby = (uvb[ok, 1] / cb["image_hw"][0] * h_s).reshape(-1, 1).astype(np.float32)
+                pa_s = cv2.remap(bgrs[ci_a], ua, vay, cv2.INTER_LINEAR)[:, 0]
+                pb_s = cv2.remap(bgrs[side_ci], ub, vby, cv2.INTER_LINEAR)[:, 0]
+                da_s = cv2.remap(grads[ci_a], ua, vay, cv2.INTER_LINEAR)[:, 0]
+                db_s = cv2.remap(grads[side_ci], ub, vby, cv2.INTER_LINEAR)[:, 0]
+                pa0 = pa_s - pa_s.mean(axis=0, keepdims=True)
+                pb0 = pb_s - pb_s.mean(axis=0, keepdims=True)
+                zncc = float(np.sum(pa0 * pb0) / (np.linalg.norm(pa0) * np.linalg.norm(pb0) + 1e-4))
+                da0, db0 = da_s - da_s.mean(), db_s - db_s.mean()
+                gncc = float((da0 @ db0) / (np.linalg.norm(da0) * np.linalg.norm(db0) + 1e-4))
+                mad = float(np.mean(np.abs(pa0 - pb0))) / 42.0
+                tex = min(1.0, float(min(np.std(pa_s), np.std(pb_s))) / 13.0)
+                pair_vals.append((0.50 * zncc + 0.50 * gncc - 0.22 * mad) * tex)
+            sf, sr = pair_vals[0], pair_vals[1]
+            if sf is not None and sr is not None:
+                scores[yi] = 0.65 * min(sf, sr) + 0.35 * 0.5 * (sf + sr)
+            elif sf is not None:
+                scores[yi] = sf * 0.55
+        bi = int(np.argmax(scores))
+        bs = float(scores[bi])
+        prom = float(bs - np.median(scores))
+        conf = float(np.clip((bs - 0.08) / 0.16, 0.0, 1.0) * np.clip((prom - 0.06) / 0.12, 0.0, 1.0))
+        y_out = float(y_cands[bi]) if conf >= 0.22 else float(default_y)
+        return [0.0, 0.0, round(side_sign * y_out, 4)], round(conf, 3)
+
+    l_poly, l_conf = solve_side(1.0)
+    r_poly, r_conf = solve_side(-1.0)
+    return {"left_poly": l_poly, "right_poly": r_poly, "confidence": [l_conf, r_conf]}
 
 
 def extract_seam_shift_zones(occupancy, grid, rig, corridor, objects, p_occ=None, is_prediction=False, max_zones=8):

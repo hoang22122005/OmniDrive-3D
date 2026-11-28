@@ -240,7 +240,7 @@
         <button type="button" id="btnStaticShield" aria-pressed="false" title="Màng kính Fresnel tan mờ xuống mặt đường">Màng Fresnel</button>
         <button type="button" id="btnVoxels" aria-pressed="false" title="Hiện cột Voxel 20cm kỹ thuật">Cột Voxel</button>
         <button type="button" id="btnXray" aria-pressed="false" title="Gầm trong suốt thực thụ dùng Temporal Ground Buffer + Vệt lốp">Gầm trong suốt</button>
-        <button type="button" id="btnAdaptBowl" aria-pressed="false" title="Điều chỉnh mép vùng nền theo lề đường ước tính">Corridor</button>
+        <button type="button" id="btnAdaptBowl" aria-pressed="true" title="Lòng chảo Hành lang Thẳng + Tự đo khoảng cách lề 4-Cam Stereo (khử bậc nhảy thị sai độ cao ở gờ vỉa & lan can cầu)">Hành lang động</button>
         <button type="button" id="btnShaderBlend" aria-pressed="true" title="Cân màu và trộn 2 dải tần Laplacian trong vùng chồng lấn">Ghép mượt</button>
         <button type="button" id="btnSeamRefine" aria-pressed="true" title="Căn hình cục bộ giữa hai ảnh tại đường ghép">Căn hình</button>
         <button type="button" id="btnForeground" aria-pressed="true" title="Dùng độ sâu LiDAR tĩnh để ép vách lòng chảo khớp gờ lề">Vách LiDAR</button>
@@ -264,6 +264,7 @@
           <button type="button" id="btnCalibGrid" aria-pressed="false" title="Trải 4 tấm bạt caro ảo vào ảnh 4 camera theo chuẩn tâm/độ cao VF 8 để test hiệu chuẩn trực tiếp">⊞ Bạt hiệu chuẩn (4 góc)</button>
           <button type="button" id="btnPerturbCam" title="Giả lập làm lệch góc camera đang chọn (+4° Pitch, -3° Yaw, +10cm Z) để bạn tự chấm PnP hoặc kéo chỉnh lại cho khớp bạt">🎲 Test lệch cam</button>
           <button type="button" id="btnCalibSave" title="Lưu cấu hình đã chỉnh vào file RigCalibrationProfile trên máy">💾 Lưu Profile</button>
+          <button type="button" id="btnExportLut" title="Sinh bảng tra LUT cố định (.bin/.npz/.h) cho thiết bị nhúng 60 FPS (Allwinner/RK3588/Jetson/OpenGL ES)">📦 Xuất LUT nhúng</button>
           <button type="button" id="btnCalibExport" title="Tải file JSON hiệu chuẩn để triển khai lên xe khác">⬇ Xuất JSON</button>
           <button type="button" id="btnCalibReset" title="Đặt lại toàn bộ chỉnh tay về chuẩn gốc">↺ Khôi phục</button>
           <span class="calib-status" id="calibStatus"></span>
@@ -401,9 +402,9 @@
       };
     }
     const VIEW_PRESETS = {
-      hero:  { pos: [-3.2, 3.15, 5.6], target: [0.15, 0.45, -1.25], fov: 44 },
-      front: { pos: [0, 2.9, 5.8], target: [0, 0.45, -2.60], fov: 44 },
-      rear:  { pos: [0, 2.9, -5.8], target: [0, 0.45, 2.60], fov: 44 },
+      hero:  { pos: [-3.55, 3.45, 8.35], target: [0.10, 0.30, -1.10], fov: 50 },
+      front: { pos: [0.00, 3.40, 8.50], target: [0.00, 0.35, -2.20], fov: 50 },
+      rear:  { pos: [0.00, 3.40, -8.50], target: [0.00, 0.35, 2.20], fov: 50 },
       left: wheelView(-150), right: wheelView(150),
     };
 
@@ -418,9 +419,9 @@
       camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
     }
 
-    const COLOR_SAMPLE_W = 256, COLOR_SAMPLE_H = 144;
+    const COLOR_SAMPLE_W = 320, COLOR_SAMPLE_H = 180;
     const PLAYBACK_TEXTURE_WIDTH = 640;
-    const PLAYBACK_COLOR_INTERVAL_MS = 450;
+    const PLAYBACK_COLOR_INTERVAL_MS = 180;
     const FOREGROUND_LOOKAHEAD = 3;
     function colorSampleOffset(uv) {
       return uv === null ? -1 : 4 * (Math.floor(uv[1] * COLOR_SAMPLE_H) * COLOR_SAMPLE_W + Math.floor(uv[0] * COLOR_SAMPLE_W));
@@ -532,12 +533,15 @@
         const rad = u.uRadii.value, prof = u.uProfile.value, gp = u.uGroundPlane.value;
         const lPoly = u.uLeftPoly.value, rPoly = u.uRightPoly.value;
         const wallScale = u.uWallScale.value, adaptStr = u.uAdaptStrength.value;
+        const curbScale = u.uCurbScale ? u.uCurbScale.value : 1.0;
+        const fp = Math.max(2.0, u.uFlatPower ? u.uFlatPower.value : 8.0);
         const ca = Math.cos(ang), sa = Math.sin(ang);
-        const sT = Math.max(0, Math.min(1, (sa + 0.30) / 0.60));
-        const sSmooth = sT * sT * (3.0 - 2.0 * sT);
-        const sideOffset = (-rPoly.z) * (1.0 - sSmooth) + lPoly.z * sSmooth - 2.25;
-        const ry = rad.y + Math.max(-0.35, Math.min(0.55, sideOffset));
-        const rFlatBase = Math.pow(Math.pow(Math.abs(ca) / rad.x, 3.0) + Math.pow(Math.abs(sa) / ry, 3.0), -1.0 / 3.0);
+        const curL = Math.max(1.85, Math.min(5.50, lPoly.z));
+        const curR = Math.max(1.85, Math.min(5.50, -rPoly.z));
+        const hL = Math.max(0.0, Math.min(0.38, lPoly.y));
+        const hR = Math.max(0.0, Math.min(0.38, rPoly.y));
+        // Wide symmetric outer bowl NEVER squeezes the road inward!
+        const rFlatBase = Math.pow(Math.pow(Math.abs(ca) / rad.x, fp) + Math.pow(Math.abs(sa) / rad.y, fp), -1.0 / fp);
         let rFlat = rFlatBase, depthWall = 0.0;
         if (u.uDepthActive.value > 0.5 && u.uWallRanges.value?.image?.data) {
           const wData = u.uWallRanges.value.image.data;
@@ -565,15 +569,24 @@
         } else {
           wallU = (tRing - flatSplit) / (1.0 - flatSplit);
           const rPad = 1.0 / Math.hypot(ca / rad.z, sa / rad.w);
-          const rSpan = (rFlatBase + rPad) - rFlat;
-          r = rFlat + rSpan * (wallU * (1.0 - depthWall * 0.45) + Math.pow(wallU, 1.38) * (depthWall * 0.45));
+          const rSpan = Math.max(0.5, (rFlatBase + rPad) - rFlat);
+          const phi = wallU * (0.5 * Math.PI);
+          r = rFlat + rSpan * (Math.sin(phi) * (1.0 - depthWall * 0.45) + Math.pow(wallU, 1.38) * (depthWall * 0.45));
         }
-        const ex = r * ca + (bowlSpec?.seam_x_shift ?? 0.35) * Math.min(1.0, tRing / flatSplit);
+        const ex = r * ca;
         const ey = r * sa;
         let ez = gp.x * ex + gp.y * ey + gp.z;
         if (wallU > 0) {
-          ez += wallScale * (prof.y * Math.pow(wallU, prof.z) * (1 - depthWall * 0.45) + prof.y * Math.pow(wallU, 1.25) * (depthWall * 0.45));
+          const phi = wallU * (0.5 * Math.PI);
+          ez += wallScale * (prof.y * (1.0 - Math.cos(phi)) * (1 - depthWall * 0.45) + prof.y * Math.pow(wallU, 1.25) * (depthWall * 0.45));
         }
+        // Independent low curb terrace (<= 0.38m) decoupled from wide 4.80m outer bowl!
+        const fw = Math.max(0, Math.min(1, (wallU - 0.20) / 0.45));
+        const fadeW = 1.0 - fw * fw * (3.0 - 2.0 * fw);
+        const ul = Math.max(0, Math.min(1, (ey - (curL - 0.05)) / 0.35));
+        const ur = Math.max(0, Math.min(1, (-ey - (curR - 0.05)) / 0.35));
+        const curbTerrace = curbScale * Math.max(ul * ul * (3.0 - 2.0 * ul) * hL, ur * ur * (3.0 - 2.0 * ur) * hR) * fadeW;
+        ez += curbTerrace;
         if (u.uPolarActive.value > 0.5 && u.uDepthActive.value > 0.5 && u.uPolarHeight.value?.image?.data) {
           const pData = u.uPolarHeight.value.image.data;
           const sIdx = (((Math.floor(ang * 128.0 / 6.2831853) % 128) + 128) % 128);
@@ -583,25 +596,46 @@
           const fOut = Math.max(0, Math.min(1, (wallU - 0.05) / 0.43));
           ez += hM * adaptStr * (1.0 - fOut * fOut * (3.0 - 2.0 * fOut));
         }
-        return [ex, ey, ez];
+        return [ex, ey, ez, wallU];
+      }
+
+      const PROJ_C0 = [-0.024, 0.0, 0.90];
+      function farProjectedPoint(ex, ey, ez, wallU) {
+        const ft = Math.max(0, Math.min(1, (wallU - 0.52) / 0.46));
+        const farT = ft * ft * (3.0 - 2.0 * ft);
+        const fs = 1.0 + 1.8 * farT * farT;
+        return [
+          PROJ_C0[0] + (ex - PROJ_C0[0]) * fs,
+          PROJ_C0[1] + (ey - PROJ_C0[1]) * fs,
+          PROJ_C0[2] + (ez - PROJ_C0[2]) * fs,
+        ];
+      }
+
+      function rotateAzElCPU(px, py, pz, dAz, dEl) {
+        const vx = px - PROJ_C0[0], vy = py - PROJ_C0[1], vz = pz - PROJ_C0[2];
+        const cA = Math.cos(dAz), sA = Math.sin(dAz);
+        const rx = vx * cA - vy * sA, ry = vx * sA + vy * cA;
+        const rXY = Math.max(Math.hypot(rx, ry), 1e-4);
+        const cE = Math.cos(dEl), sE = Math.sin(dEl);
+        const rNew = rXY * cE - vz * sE;
+        const zNew = rXY * sE + vz * cE;
+        const sc = rNew / rXY;
+        return [PROJ_C0[0] + rx * sc, PROJ_C0[1] + ry * sc, PROJ_C0[2] + zNew];
       }
 
       function computeLiveUVs(pair, stage) {
         if (!calibs || !stage) return pair.uv;
-        const u = stage.bowlMat.uniforms;
-        if (u.uDepthActive.value < 0.5 && Math.abs(u.uLeftPoly.value.z - 2.25) < 0.05 && Math.abs(u.uRightPoly.value.z + 2.25) < 0.05) {
-          return pair.uv;
-        }
         const [ca, cb] = pair.cameras;
         const uvA = new Int32Array(rings * steps), uvB = new Int32Array(rings * steps);
         for (let r = 0; r < rings; r++) {
           const tRing = r / Math.max(rings - 1, 1);
           for (let j = 0; j < steps; j++) {
             const ang = pair.angle + offsets[j];
-            const [ex, ey, ez] = deformedBowlPoint(ang, tRing, stage);
+            const [ex, ey, ez, wallU] = deformedBowlPoint(ang, tRing, stage);
+            const [px, py, pz] = farProjectedPoint(ex, ey, ez, wallU);
             const n = r * steps + j;
-            uvA[n] = projectPointCamCPU(calibs[ca], ex, ey, ez);
-            uvB[n] = projectPointCamCPU(calibs[cb], ex, ey, ez);
+            uvA[n] = projectPointCamCPU(calibs[ca], px, py, pz);
+            uvB[n] = projectPointCamCPU(calibs[cb], px, py, pz);
           }
         }
         return [uvA, uvB];
@@ -620,9 +654,9 @@
         const dr = Math.abs(linearColor[first[i]] * ga.x - linearColor[second[k]] * gb.x);
         const db = Math.abs(linearColor[first[i+2]] * ga.z - linearColor[second[k+2]] * gb.z);
         const diff = (0.23 * dr + 0.59 * Math.abs(a - b) + 0.18 * db) / (0.18 + 0.5 * (a + b));
-        // Strongly prefer routing the seam through low-detail asphalt over high-contrast edges (bikes/curbs)
-        const edge = 0.38 * (localDetail(first, i) + localDetail(second, k));
-        return Math.min(0.95, diff + edge);
+        // Strongly prefer routing the seam through low-detail asphalt over high-contrast edges (bikes/cars/curbs)
+        const edge = 0.48 * (localDetail(first, i) + localDetail(second, k));
+        return Math.min(0.98, diff + edge);
       }
 
       function fitPair(pair, pixels, gains, adjacent, stage) {
@@ -639,7 +673,7 @@
             const n = r * steps + j;
             const i = liveUv[0][n], k = liveUv[1][n];
             let cost = i >= 0 && k >= 0 ? mismatch(first, second, ga, gb, i, k) : 1.0;
-            cost += 0.16 * ((j - center) / center) ** 2;
+            cost += 0.10 * ((j - center) / center) ** 2;
             if (adjacent && pair.path) cost += 0.014 * (j - pair.path[r]) ** 2;
             let best = Infinity, from = j;
             for (let p = Math.max(0, j - 2); p <= Math.min(steps - 1, j + 2); p++) {
@@ -660,63 +694,164 @@
         return result;
       }
 
-      function refinePair(pair, pixels, gains, adjacent) {
+      // Real-time Per-Seam 2D Angular Alignment Warp (APAP-style wall disparity field, <1.8ms on 320x180!)
+      // Estimates smooth (dAz, dEl) across wall rings r so Cam B(ray + dAz,dEl) == Cam A(ray) across FL, LR, RR, RF.
+      // Strong radial smoothing prevents any local wave/dent on straight steel bridge pipes; strictly ZERO on flat road!
+      const MAX_WARP_AZ = 0.065; // +-3.7 deg
+      const MAX_WARP_EL = 0.032; // +-1.8 deg
+      const PATCH_AZ = [-0.055, -0.0275, 0.0, 0.0275, 0.055];
+      const PATCH_EL = [-0.032, -0.016,  0.0, 0.016,  0.032];
+      const COARSE_AZ = [-0.060, -0.040, -0.020, 0.0, 0.020, 0.040, 0.060];
+      const COARSE_EL = [-0.030, -0.015,  0.0,   0.015, 0.030];
+      const FINE_STEPS = [-2, -1, 0, 1, 2];
+
+      function alignPairWall2D(pair, pixels, gains, adjacent, stage) {
+        const dAzOut = new Float32Array(rings);
+        const dElOut = new Float32Array(rings);
         const [a, b] = pair.cameras;
-        const first = pixels[a], second = pixels[b];
-        const shifts = new Float32Array(rings);
-        if (!first || !second) return shifts;
-        const ga = gains[a], gb = gains[b];
-        const [refA, refB] = pair.refine;
-        for (let r = 1; r < rings - 1; r++) {
-          let best = 0;
-          for (let candidate = 0; candidate < displacements.length; candidate++) {
-            if (candidate === zero) continue;
-            let baseFit = 0, shiftedFit = 0, nFit = 0;
-            let baseCheck = 0, shiftedCheck = 0, nCheck = 0;
-            let edgeGain = 0, nEdge = 0, maxRegression = 0;
-            for (let rr = r - 1; rr <= r + 1; rr++) {
-              const j = Math.round(pair.path[rr]);
-              const extent = rr === r ? 3 : 1;
-              for (let cc = Math.max(0, j - extent); cc <= Math.min(steps - 1, j + extent); cc++) {
-                const n = rr * steps + cc;
-                const ra = refA[zero][n], rb = refB[zero][n], da = refA[candidate][n], db = refB[candidate][n];
-                if (Math.min(ra, rb, da, db) < 0 || Math.min(first[ra+1], second[rb+1], first[da+1], second[db+1]) < 22) continue;
-                const base = mismatch(first, second, ga, gb, ra, rb);
-                const trial = mismatch(first, second, ga, gb, da, db);
-                if (Math.abs(cc - j) >= 2) {
-                  edgeGain += base - trial; nEdge++;
-                  maxRegression = Math.max(maxRegression, trial - base);
-                } else if (rr === r) { baseCheck += base; shiftedCheck += trial; nCheck++; }
-                else { baseFit += base; shiftedFit += trial; nFit++; }
+        const pA = pixels[a], pB = pixels[b];
+        if (!pA || !pB || !stage || !calibs) return [dAzOut, dElOut];
+        const cA = calibs[a], cB = calibs[b];
+        const gA = gains[a], gB = gains[b];
+        const flatSplit = stage.bowlMat.uniforms.uProfile.value.x;
+        const patchR = new Float32Array(25), patchG = new Float32Array(25), patchB = new Float32Array(25);
+        const patchValid = new Uint8Array(25);
+        const rawAz = new Float32Array(rings), rawEl = new Float32Array(rings);
+        const rawConf = new Float32Array(rings);
+
+        for (let r = 0; r < rings; r++) {
+          const tRing = r / Math.max(rings - 1, 1);
+          if (tRing <= flatSplit + 0.01) continue;
+          const ang = pair.angle + (pair.path[r] - center) * (offsets[1] - offsets[0]);
+          const [ex, ey, ez, wallU] = deformedBowlPoint(ang, tRing, stage);
+          const [px, py, pz] = farProjectedPoint(ex, ey, ez, wallU);
+
+          // Sample 5x5 reference patch in Cam A
+          let nValidA = 0, mAr = 0, mAg = 0, mAb = 0;
+          for (let ie = 0; ie < 5; ie++) {
+            for (let ia = 0; ia < 5; ia++) {
+              const k = ie * 5 + ia;
+              const [qx, qy, qz] = rotateAzElCPU(px, py, pz, PATCH_AZ[ia], PATCH_EL[ie]);
+              const idxA = projectPointCamCPU(cA, qx, qy, qz);
+              if (idxA < 0) { patchValid[k] = 0; continue; }
+              patchValid[k] = 1;
+              const rr = pA[idxA] * gA.x, gg = pA[idxA + 1] * gA.y, bb = pA[idxA + 2] * gA.z;
+              patchR[k] = rr; patchG[k] = gg; patchB[k] = bb;
+              mAr += rr; mAg += gg; mAb += bb;
+              nValidA++;
+            }
+          }
+          if (nValidA < 12) continue;
+          mAr /= nValidA; mAg /= nValidA; mAb /= nValidA;
+          let varA = 0;
+          for (let k = 0; k < 25; k++) {
+            if (!patchValid[k]) continue;
+            patchR[k] -= mAr; patchG[k] -= mAg; patchB[k] -= mAb;
+            varA += patchR[k]*patchR[k] + patchG[k]*patchG[k] + patchB[k]*patchB[k];
+          }
+          if (varA < 220 * nValidA) continue; // Skip flat textureless sky
+
+          const bR = new Float32Array(25), bG = new Float32Array(25), bB = new Float32Array(25);
+          const bOk = new Uint8Array(25);
+          const scoreShift = (sAz, sEl) => {
+            let nB = 0, mBr = 0, mBg = 0, mBb = 0;
+            bOk.fill(0);
+            for (let ie = 0; ie < 5; ie++) {
+              for (let ia = 0; ia < 5; ia++) {
+                const k = ie * 5 + ia;
+                if (!patchValid[k]) continue;
+                const [qx, qy, qz] = rotateAzElCPU(px, py, pz, PATCH_AZ[ia] + sAz, PATCH_EL[ie] + sEl);
+                const idxB = projectPointCamCPU(cB, qx, qy, qz);
+                if (idxB < 0) continue;
+                bOk[k] = 1;
+                const rr = pB[idxB] * gB.x, gg = pB[idxB + 1] * gB.y, bb = pB[idxB + 2] * gB.z;
+                bR[k] = rr; bG[k] = gg; bB[k] = bb;
+                mBr += rr; mBg += gg; mBb += bb;
+                nB++;
               }
             }
-            if (nFit < 4 || nCheck < 2) continue;
-            const fitGain = (baseFit - shiftedFit) / nFit;
-            const checkGain = (baseCheck - shiftedCheck) / nCheck;
-            if (fitGain < Math.max(0.025, 0.16 * baseFit / nFit) || checkGain < Math.max(0.018, 0.10 * baseCheck / nCheck)) continue;
-            if (nEdge < 2 || edgeGain / nEdge < 0.010 || maxRegression > 0.060) continue;
-            const benefit = fitGain - 0.015 * Math.abs(displacements[candidate]) / 0.12;
-            if (benefit > best) { best = benefit; shifts[r] = displacements[candidate]; }
+            if (nB < 10) return -2.0;
+            mBr /= nB; mBg /= nB; mBb /= nB;
+            let dot = 0, nA2 = 0, nB2 = 0;
+            for (let k = 0; k < 25; k++) {
+              if (!bOk[k]) continue;
+              const ar = patchR[k], ag = patchG[k], ab = patchB[k];
+              const br = bR[k] - mBr, bg = bG[k] - mBg, bb = bB[k] - mBb;
+              dot += ar*br + ag*bg + ab*bb;
+              nA2 += ar*ar + ag*ag + ab*ab;
+              nB2 += br*br + bg*bg + bb*bb;
+            }
+            const zncc = dot / (Math.sqrt(nA2 * nB2) + 1e-3);
+            const pen = 0.055 * ((sAz / 0.09) ** 2 + (sEl / 0.06) ** 2);
+            return zncc - pen;
+          };
+
+          const zeroScore = scoreShift(0.0, 0.0);
+          let bestS = zeroScore, bestAz = 0.0, bestEl = 0.0;
+          for (const cAz of COARSE_AZ) {
+            for (const cEl of COARSE_EL) {
+              const s = scoreShift(cAz, cEl);
+              if (s > bestS) { bestS = s; bestAz = cAz; bestEl = cEl; }
+            }
+          }
+          // Fine refinement around coarse winner
+          const bAz0 = bestAz, bEl0 = bestEl;
+          for (const fa of FINE_STEPS) {
+            for (const fe of FINE_STEPS) {
+              const tAz = Math.max(-MAX_WARP_AZ, Math.min(MAX_WARP_AZ, bAz0 + fa * 0.008));
+              const tEl = Math.max(-MAX_WARP_EL, Math.min(MAX_WARP_EL, bEl0 + fe * 0.006));
+              const s = scoreShift(tAz, tEl);
+              if (s > bestS) { bestS = s; bestAz = tAz; bestEl = tEl; }
+            }
+          }
+          const gain = bestS - zeroScore;
+          if (bestS >= 0.48 && gain >= 0.060) {
+            const conf = Math.min(1.0, (bestS - 0.40) / 0.35) * Math.min(1.0, gain / 0.16);
+            rawAz[r] = bestAz * conf;
+            rawEl[r] = bestEl * conf;
+            rawConf[r] = conf;
           }
         }
-        return shifts.map((d, r) => {
-          if (d === 0) return 0;
-          const before = d * shifts[r-1] > 0 ? shifts[r-1] : d;
-          const after = d * shifts[r+1] > 0 ? shifts[r+1] : d;
-          const local = 0.60 * d + 0.10 * (before + after);
-          return adjacent && pair.shift && pair.shift[r] * d > 0 ? 0.50 * local + 0.50 * pair.shift[r] : local;
-        });
+
+        // Strong 5-tap Gaussian radial smoothing across wall rings -> straight pipes stay 100% smooth (zero waves/dents!)
+        const kW = [0.10, 0.22, 0.36, 0.22, 0.10];
+        for (let r = 0; r < rings; r++) {
+          const tRing = r / Math.max(rings - 1, 1);
+          if (tRing <= flatSplit + 0.01) continue;
+          let sAz = 0, sEl = 0, wSum = 0;
+          for (let d = -2; d <= 2; d++) {
+            const rr = r + d;
+            if (rr < 0 || rr >= rings || rr / Math.max(rings - 1, 1) <= flatSplit + 0.01) continue;
+            const w = kW[d + 2];
+            sAz += w * rawAz[rr];
+            sEl += w * rawEl[rr];
+            wSum += w;
+          }
+          if (wSum > 0) { sAz /= wSum; sEl /= wSum; }
+          if (adjacent && pair.warpAz && pair.warpEl) {
+            dAzOut[r] = 0.35 * sAz + 0.65 * pair.warpAz[r];
+            dElOut[r] = 0.35 * sEl + 0.65 * pair.warpEl[r];
+          } else {
+            dAzOut[r] = sAz;
+            dElOut[r] = sEl;
+          }
+        }
+        return [dAzOut, dElOut];
       }
 
       function sample(pixels, gains, adjacent, stage = null) {
         state.forEach((pair, i) => {
           pair.path = fitPair(pair, pixels, gains, adjacent, stage);
-          pair.shift = refinePair(pair, pixels, gains, adjacent);
+          const [wAz, wEl] = alignPairWall2D(pair, pixels, gains, adjacent, stage);
+          pair.warpAz = wAz;
+          pair.warpEl = wEl;
           for (let r = 0; r < rings; r++) {
             const angle = (pair.path[r] - center) * (offsets[1] - offsets[0]);
             const pixel = 4 * (i * rings + r);
-            data[pixel] = Math.max(0, Math.min(255, Math.round(128 + 126 * angle / maxOff)));
-            data[pixel+1] = Math.max(0, Math.min(255, Math.round(128 + 126 * pair.shift[r] / 0.24)));
+            data[pixel]     = Math.max(0, Math.min(255, Math.round(128 + 126 * angle / maxOff)));
+            data[pixel + 1] = Math.max(0, Math.min(255, Math.round(128 + 126 * wAz[r] / MAX_WARP_AZ)));
+            data[pixel + 2] = Math.max(0, Math.min(255, Math.round(128 + 126 * wEl[r] / MAX_WARP_EL)));
+            data[pixel + 3] = 255;
           }
         });
         texture.needsUpdate = true;
@@ -1587,11 +1722,14 @@
       return new THREE.ShaderMaterial({
         uniforms: {
           ...makeCamUniforms(camTextures, calibs),
-          uLeftPoly: { value: new THREE.Vector3(0.0, 0.0, 2.20) },
-          uRightPoly: { value: new THREE.Vector3(0.0, 0.0, -2.20) },
+          uLeftPoly: { value: new THREE.Vector3(0.0, 0.0, 3.80) },
+          uRightPoly: { value: new THREE.Vector3(0.0, 0.0, -3.80) },
           uRadii: { value: new THREE.Vector4(spec.flat_rx, spec.flat_ry, spec.pad_x, spec.pad_y) },
           uProfile: { value: new THREE.Vector3(spec.flat_split, spec.wall_height, spec.wall_power) },
+          uFlatPower: { value: spec.flat_power ?? 8.0 },
+          uRadPower: { value: spec.rad_power ?? 1.0 },
           uWallScale: { value: 1.0 },
+          uCurbScale: { value: 1.0 },
           uGroundPlane: { value: new THREE.Vector3(0.0, 0.0, 0.023) },
           uAdaptStrength: { value: 1.0 },
           uDynZones: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)) },
@@ -1622,7 +1760,10 @@
           uniform vec3 uRightPoly;
           uniform vec4 uRadii;
           uniform vec3 uProfile;
+          uniform float uFlatPower;
+          uniform float uRadPower;
           uniform float uWallScale;
+          uniform float uCurbScale;
           uniform float uDepthActive;
           uniform float uPolarActive;
           uniform vec3 uGroundPlane;
@@ -1662,10 +1803,10 @@
             float ang = aBowlParam.y;
             float ca = cos(ang), sa = sin(ang);
 
-            float sideOffset = mix(-uRightPoly.z, uLeftPoly.z, smoothstep(-0.30, 0.30, sa)) - 2.25;
-            float ry = uRadii.y + clamp(sideOffset, -0.35, 0.55);
-            // Superellipse (p=3.0) keeps straight road corridors flat instead of pinching 45-deg corners
-            float se = pow(pow(abs(ca) / uRadii.x, 3.0) + pow(abs(sa) / ry, 3.0), -1.0 / 3.0);
+            // OEM Wide Gentle Quarter-Ellipse Bowl (rx=11.5m, ry=4.8m, pad=10.5x9.0m -> 27.6m spacious arena!)
+            // Outer bowl NEVER shrinks inward -> road lanes stay wide & flat, zero steep canyon walls!
+            float fp = max(uFlatPower, 2.0);
+            float se = pow(pow(abs(ca) / uRadii.x, fp) + pow(abs(sa) / uRadii.y, fp), -1.0 / fp);
             float rFlatBase = se;
             float rFlat = rFlatBase;
             float depthWall = 0.0;
@@ -1690,19 +1831,33 @@
               r = mix(0.05, rFlat, t / flatSplit);
             } else {
               wallU = (t - flatSplit) / (1.0 - flatSplit);
+              float phi = wallU * 1.5707963;
               float rPad = 1.0 / length(vec2(ca / uRadii.z, sa / uRadii.w));
-              float rSpan = (rFlatBase + rPad) - rFlat;
-              float rSmooth = rFlat + rSpan * wallU;
+              float rSpan = max(0.5, (rFlatBase + rPad) - rFlat);
+              float rSmooth = rFlat + rSpan * sin(phi);
               float rSteep = rFlat + rSpan * pow(wallU, 1.38);
               r = mix(rSmooth, rSteep, depthWall * 0.45);
             }
-            float roadZ = dot(uGroundPlane, vec3(r * ca, r * sa, 1.0));
+            float ex = r * ca;
+            float ey = r * sa;
+            float roadZ = dot(uGroundPlane, vec3(ex, ey, 1.0));
             float wallZ = 0.0;
             if (wallU > 0.0) {
-              float zSmooth = uProfile.y * pow(wallU, uProfile.z);
+              float phi = wallU * 1.5707963;
+              float zSmooth = uProfile.y * (1.0 - cos(phi));
               float zSteep = uProfile.y * pow(wallU, 1.25);
               wallZ = uWallScale * mix(zSmooth, zSteep, depthWall * 0.45);
             }
+            // Independent Low Curb Terrace (<=0.38m): lifts ONLY verified continuous curbs at Y_left / -Y_right
+            // while keeping median hedge, adjacent lanes, vans, and trees flat & natural (zero "đổ cao"!).
+            float curL = clamp(uLeftPoly.z, 1.85, 5.50);
+            float curR = clamp(-uRightPoly.z, 1.85, 5.50);
+            float hL = clamp(uLeftPoly.y, 0.0, 0.38);
+            float hR = clamp(uRightPoly.y, 0.0, 0.38);
+            float fadeWall = 1.0 - smoothstep(0.20, 0.65, wallU);
+            float tL = smoothstep(curL - 0.05, curL + 0.30, ey) * hL;
+            float tR = smoothstep(curR - 0.05, curR + 0.30, -ey) * hR;
+            wallZ += uCurbScale * max(tL, tR) * fadeWall;
             float curbZ = 0.0;
             if (uPolarActive > 0.5 && uDepthActive > 0.5 && uWallScale > 0.001) {
               curbZ = samplePolarHeight(ang, r) * uAdaptStrength * (1.0 - smoothstep(0.05, 0.48, wallU));
@@ -1775,18 +1930,29 @@
             return 1.0 - 0.35 * wallWeight * smoothstep(0.35 + 0.05 * hit, 0.95 + 0.08 * hit, behind);
           }
 
-          vec2 seamValue(float row) {
+          vec3 seamValue3(float row) {
             float column = (0.5 + clamp(vRing, 0.0, 1.0) * (uSeamRings - 1.0)) / uSeamRings;
-            return (texture2D(uSeamPaths, vec2(column, row)).rg * 255.0 - 128.0) * vec2(uSeamMaxOffset, 0.24) / 126.0;
+            return (texture2D(uSeamPaths, vec2(column, row)).rgb * 255.0 - 128.0) * vec3(uSeamMaxOffset, 0.065, 0.032) / 126.0;
+          }
+
+          vec3 rotateAzEl(vec3 p, vec3 c0, float dAz, float dEl) {
+            vec3 v = p - c0;
+            float cA = cos(dAz), sA = sin(dAz);
+            vec2 xy = vec2(v.x * cA - v.y * sA, v.x * sA + v.y * cA);
+            float rXY = max(length(xy), 1e-4);
+            float cE = cos(dEl), sE = sin(dEl);
+            float rNew = rXY * cE - v.z * sE;
+            float zNew = rXY * sE + v.z * cE;
+            return c0 + vec3(xy * (rNew / rXY), zNew);
           }
 
           float angleDistance(float a, float b) {
             return abs(atan(sin(a - b), cos(a - b)));
           }
 
-          float seamCorrection(float angle, float center, float target, vec2 axisA, vec2 axisB) {
+          float seamCorrection(float angle, float center, float target, vec2 axisA, vec2 axisB, float xScale) {
             float around = angleDistance(angle, center);
-            vec2 shifted = normalize(vec2(cos(target) / 1.65, sin(target)));
+            vec2 shifted = normalize(vec2(cos(target) / xScale, sin(target)));
             return 0.5 * dot(shifted, axisA - axisB) * (1.0 - smoothstep(0.36, 0.77, around));
           }
 
@@ -1807,53 +1973,63 @@
           }
 
           void main() {
-            // Camera-anchored corner azimuth anchored at physical mirror cameras (x = +1.00m)
-            // Keeps side curbs intact under Left/Right cams and rear speed-bumps intact under Rear cam!
-            vec2 dirEgo = normalize(vec2((vEgoPos.x - 1.00) / 1.65, vEgoPos.y) + vec2(1e-5, 0.0));
-            float egoAng = atan(vEgoPos.y, vEgoPos.x - 1.00);
-            vec3 surface = cross(dFdx(vEgoPos), dFdy(vEgoPos));
-            surface /= max(length(surface), 1e-6);
-            if (dot(surface, vec3(-dirEgo, 1.0)) < 0.0) surface = -surface;
+            // Unified symmetric 4-corner seam (scale=1.35, +-36.5 deg) + Progressive Far-Field Depth Projection
+            // + Real-time Per-Seam 2D Angular Alignment Warp (APAP) on wall rings (strictly 0 on flat road!)
+            float wallSeamScale = 1.35;
+            vec2 dirEgo = normalize(vec2((vEgoPos.x + 0.024) / wallSeamScale, vEgoPos.y) + vec2(1e-5, 0.0));
+            float egoAng = atan(vEgoPos.y, vEgoPos.x + 0.024);
             bool useSeam = uSmoothSeams > 0.5 && uSeamActive > 0.5;
             vec4 targets = uSeamCenters;
-            vec3 samplePoint = vEgoPos;
+
+            // Gentle Progressive Far-Field Depth Projection (upper sky/building wall ONLY, vWallU > 0.52):
+            //   Road, curb & bridge railings (vWallU <= 0.52): farScale = 1.0 (zero bulge on near steel pipes!)
+            //   Upper outer skyline wall (vWallU 0.52 -> 0.98): extends ray up to 2.8x (~35m) cleanly!
+            float farT = smoothstep(0.52, 0.98, vWallU) * (1.0 - step(0.5, uTopFade));
+            float farScale = 1.0 + 1.8 * farT * farT;
+            vec3 projCenter = vec3(-0.024, 0.0, 0.90);
+            vec3 baseProjPt = projCenter + (vEgoPos - projCenter) * farScale;
+
+            vec2 sh0 = vec2(0.0), sh1 = vec2(0.0), sh2 = vec2(0.0), sh3 = vec2(0.0);
             if (useSeam) {
-              vec2 fl = seamValue(0.125), lr = seamValue(0.375);
-              vec2 rr = seamValue(0.625), rf = seamValue(0.875);
+              vec3 fl = seamValue3(0.125), lr = seamValue3(0.375);
+              vec3 rr = seamValue3(0.625), rf = seamValue3(0.875);
               targets += vec4(fl.x, lr.x, rr.x, rf.x);
-              // Never displace flat road surface (vWallU == 0) — prevents artificial bumps/V-kinks on road markings!
-              float wallRefine = smoothstep(0.12, 0.48, vWallU);
-              if (uSeamRefine > 0.5 && wallRefine > 0.001) {
+              // Symmetric 2D angular alignment warp strictly on rising wall (vWallU > 0.05), never bends flat road!
+              float wallWarp = smoothstep(0.05, 0.16, vWallU);
+              if (uSeamRefine > 0.5 && wallWarp > 0.001) {
                 vec4 around = vec4(angleDistance(egoAng, targets.x), angleDistance(egoAng, targets.y),
                                    angleDistance(egoAng, targets.z), angleDistance(egoAng, targets.w));
-                vec4 blend = 1.0 - smoothstep(vec4(0.08), vec4(0.23), around);
-                float refineScale = (uDepthActive > 0.5 ? 0.55 : 1.0) * wallRefine;
-                samplePoint += surface * (dot(blend, vec4(fl.y, lr.y, rr.y, rf.y)) * refineScale);
+                vec4 wb = (1.0 - smoothstep(vec4(0.0), vec4(0.36), around)) * (0.5 * wallWarp);
+                // Pair order matches Python: FL=(0,2), LR=(2,1), RR=(1,3), RF=(3,0); Cam A -= 0.5*d, Cam B += 0.5*d
+                sh0 += -wb.x * fl.yz + wb.w * rf.yz;
+                sh2 +=  wb.x * fl.yz - wb.y * lr.yz;
+                sh1 +=  wb.y * lr.yz - wb.z * rr.yz;
+                sh3 +=  wb.z * rr.yz - wb.w * rf.yz;
               }
             }
+            vec3 pt0 = dot(sh0, sh0) > 1e-8 ? rotateAzEl(baseProjPt, projCenter, sh0.x, sh0.y) : baseProjPt;
+            vec3 pt1 = dot(sh1, sh1) > 1e-8 ? rotateAzEl(baseProjPt, projCenter, sh1.x, sh1.y) : baseProjPt;
+            vec3 pt2 = dot(sh2, sh2) > 1e-8 ? rotateAzEl(baseProjPt, projCenter, sh2.x, sh2.y) : baseProjPt;
+            vec3 pt3 = dot(sh3, sh3) > 1e-8 ? rotateAzEl(baseProjPt, projCenter, sh3.x, sh3.y) : baseProjPt;
+
             vec2 uv0, uv1, uv2, uv3;
             float oc0, oc1, oc2, oc3, t0, t1, t2, t3, b0, b1, b2, b3;
             // Keep full clean asphalt right up to front & rear bumpers while hiding vehicle interior
-            float v0 = projectCamKB4(uCamMask.x, uCamT[0], uCamFxy[0], uCamCxy[0], uCamSkew[0], uCamK[0], uCamMaxTh[0], uCamHW[0], uCamVC[0], uCamXY[0], uCamFwd[0], 4.0, samplePoint, uv0, oc0, t0, b0);
-            float v1 = projectCamKB4(uCamMask.y, uCamT[1], uCamFxy[1], uCamCxy[1], uCamSkew[1], uCamK[1], uCamMaxTh[1], uCamHW[1], uCamVC[1], uCamXY[1], uCamFwd[1], 4.0, samplePoint, uv1, oc1, t1, b1);
-            float v2 = projectCamKB4(uCamMask.z, uCamT[2], uCamFxy[2], uCamCxy[2], uCamSkew[2], uCamK[2], uCamMaxTh[2], uCamHW[2], uCamVC[2], uCamXY[2], uCamFwd[2], 2.0, samplePoint, uv2, oc2, t2, b2);
-            float v3 = projectCamKB4(uCamMask.w, uCamT[3], uCamFxy[3], uCamCxy[3], uCamSkew[3], uCamK[3], uCamMaxTh[3], uCamHW[3], uCamVC[3], uCamXY[3], uCamFwd[3], 2.0, samplePoint, uv3, oc3, t3, b3);
+            float v0 = projectCamKB4(uCamMask.x, uCamT[0], uCamFxy[0], uCamCxy[0], uCamSkew[0], uCamK[0], uCamMaxTh[0], uCamHW[0], uCamVC[0], uCamXY[0], uCamFwd[0], 4.0, pt0, uv0, oc0, t0, b0);
+            float v1 = projectCamKB4(uCamMask.y, uCamT[1], uCamFxy[1], uCamCxy[1], uCamSkew[1], uCamK[1], uCamMaxTh[1], uCamHW[1], uCamVC[1], uCamXY[1], uCamFwd[1], 4.0, pt1, uv1, oc1, t1, b1);
+            float v2 = projectCamKB4(uCamMask.z, uCamT[2], uCamFxy[2], uCamCxy[2], uCamSkew[2], uCamK[2], uCamMaxTh[2], uCamHW[2], uCamVC[2], uCamXY[2], uCamFwd[2], 2.0, pt2, uv2, oc2, t2, b2);
+            float v3 = projectCamKB4(uCamMask.w, uCamT[3], uCamFxy[3], uCamCxy[3], uCamSkew[3], uCamK[3], uCamMaxTh[3], uCamHW[3], uCamVC[3], uCamXY[3], uCamFwd[3], 2.0, pt3, uv3, oc3, t3, b3);
 
             vec2 axis0 = normalize(uCamFwd[0]), axis1 = normalize(uCamFwd[1]);
             vec2 axis2 = normalize(uCamFwd[2]), axis3 = normalize(uCamFwd[3]);
             float c0 = dot(dirEgo, axis0), c1 = dot(dirEgo, axis1);
             float c2 = dot(dirEgo, axis2), c3 = dot(dirEgo, axis3);
-            // Keep longitudinal side curbs/railings (|y| > 1.85m) under Left/Right mirror cams only within their
-            // sharp optical zone (x in [-3.8, +5.6]m) so 80-deg grazing periphery never ghosts onto Front cam's lane lines!
-            float fwdSpan = smoothstep(-3.8, -2.0, vEgoPos.x) * (1.0 - smoothstep(4.6, 6.2, vEgoPos.x));
-            if (v2 > 0.5 && b2 > 0.02) c2 += 0.72 * smoothstep(1.68, 2.18, vEgoPos.y) * fwdSpan * smoothstep(0.02, 0.22, b2);
-            if (v3 > 0.5 && b3 > 0.02) c3 += 0.72 * smoothstep(1.68, 2.18, -vEgoPos.y) * fwdSpan * smoothstep(0.02, 0.22, b3);
             float egoRad = length(vEgoPos.xy);
             if (useSeam) {
-              float fl = seamCorrection(egoAng, uSeamCenters.x, targets.x, axis0, axis2);
-              float lr = seamCorrection(egoAng, uSeamCenters.y, targets.y, axis2, axis1);
-              float rr = seamCorrection(egoAng, uSeamCenters.z, targets.z, axis1, axis3);
-              float rf = seamCorrection(egoAng, uSeamCenters.w, targets.w, axis3, axis0);
+              float fl = seamCorrection(egoAng, uSeamCenters.x, targets.x, axis0, axis2, wallSeamScale);
+              float lr = seamCorrection(egoAng, uSeamCenters.y, targets.y, axis2, axis1, wallSeamScale);
+              float rr = seamCorrection(egoAng, uSeamCenters.z, targets.z, axis1, axis3, wallSeamScale);
+              float rf = seamCorrection(egoAng, uSeamCenters.w, targets.w, axis3, axis0, wallSeamScale);
               c0 += rf - fl;
               c2 += fl - lr;
               c1 += lr - rr;
@@ -1905,10 +2081,14 @@
             bool inHistBounds = (underUv.x > 0.01 && underUv.x < 0.99 && underUv.y > 0.01 && underUv.y < 0.99);
             float bodySdf = sdRoundedBox(vEgoPos.xy - vec2(-0.024, 0.0), vec2(2.375, 0.967), 0.28);
 
-            // Diagonal hazard hatch marks blind regions lacking any valid live camera source
+            // Diagonal hazard hatch ONLY for real camera dropouts; healthy 4-cam under-bumper collar & upper sky rim use clean fades!
+            bool allCamsHealthy = dot(uCamMask, vec4(1.0)) > 3.5;
             float hatch = step(0.5, fract((vEgoPos.x + vEgoPos.y) * 2.2));
-            vec3 col = mix(vec3(0.032, 0.024, 0.028), vec3(0.085, 0.036, 0.042), hatch * 0.65);
-            float liveEdge = clamp(max(max(b0 * v0, b1 * v1), max(b2 * v2, b3 * v3)) * 2.8, 0.0, 1.0);
+            vec3 hatchCol = mix(vec3(0.032, 0.024, 0.028), vec3(0.085, 0.036, 0.042), hatch * 0.65);
+            vec3 collarCol = vec3(0.095, 0.100, 0.105) * mix(0.22, 0.88, smoothstep(-0.10, 0.22, bodySdf));
+            vec3 skyRimCol = vec3(0.10, 0.13, 0.16) * (1.0 - smoothstep(0.75, 1.0, vWallU) * 0.55);
+            vec3 col = (allCamsHealthy && bodySdf < 0.30) ? collarCol : (allCamsHealthy && vWallU > 0.65 ? skyRimCol : hatchCol);
+            float liveEdge = clamp(max(max(b0 * v0, b1 * v1), max(b2 * v2, b3 * v3)) * 3.2, 0.0, 1.0);
 
             if (sumL > 0.0) {
               vec3 liveCol;
@@ -1918,8 +2098,12 @@
               vec3 rgb3 = readColor(uCam3, uv3, uCamGain[3], valid.w);
               float wall = smoothstep(0.02, 0.45, vWallU);
               float isTop = step(0.5, uTopFade);
-              vec4 wLow = seamWeights(score, valid, mix(mix(3.6, 5.8, wall), 3.4, isTop));
-              vec4 wHigh = seamWeights(score, valid, mix(mix(36.0, 82.0, wall), 16.0, isTop));
+              // SOTA Zero-Ghosting Multi-Band + Disagreement-Gated Winner-Take-All Seam Cut (ICCV 2023-2025):
+              //   1) Low-frequency illumination (wLow): ALWAYS wide & smooth -> zero brightness bands!
+              //   2) High-frequency detail (wSharp): crisp Winner-Take-All (100%/0%) whenever two cameras disagree
+              //      on 3D objects (motorbikes/cars/curbs) -> ZERO dangerous ghosting or double-exposure!
+              vec4 wLow = seamWeights(score, valid, mix(mix(3.0, 4.4, wall), 3.0, isTop));
+              vec4 wHigh = seamWeights(score, valid, mix(mix(32.0, 64.0, wall), 24.0, isTop));
               float maxLow = max(max(wLow.x, wLow.y), max(wLow.z, wLow.w));
               if (sumL > 1.5 && uSmoothSeams > 0.5 && maxLow < 0.985) {
                 vec3 colSoft = rgb0 * wLow.x + rgb1 * wLow.y + rgb2 * wLow.z + rgb3 * wLow.w;
@@ -1927,10 +2111,12 @@
                   + rgb2 * rgb2 * wLow.z + rgb3 * rgb3 * wLow.w;
                 vec3 lumaW = vec3(0.2126, 0.7152, 0.0722);
                 float sigma = sqrt(dot(max(moment - colSoft * colSoft, vec3(0.0)), lumaW));
-                float disagree = smoothstep(0.045, 0.18, sigma / (0.12 + dot(colSoft, lumaW))) * (1.0 - 0.72 * isTop);
-                vec4 wSharp = mix(wHigh, seamWeights(score, valid, mix(88.0, 135.0, wall)), disagree);
-                // Keep low-frequency brightness/color smoothly blended across flat asphalt (eliminates sharp dark bands!)
-                vec4 wLowUse = mix(wLow, wSharp, wall * disagree * 0.18);
+                // Detect 3D parallax disagreement (motorbikes, cars, pedestrians, curbs) in BOTH 3D and 2D Top-Down!
+                float disagree = smoothstep(0.035, 0.13, sigma / (0.10 + dot(colSoft, lumaW))) * (1.0 - 0.15 * isTop);
+                vec4 wWta = seamWeights(score, valid, mix(150.0, 220.0, wall));
+                vec4 wSharp = mix(wHigh, wWta, disagree);
+                // Keep flat-asphalt illumination smooth, but follow WTA decisively on disagreeing 3D objects/curb blocks so red/white paint cannot smear!
+                vec4 wLowUse = mix(wLow, wWta, smoothstep(0.22, 0.65, disagree) * (0.72 + 0.22 * wall));
                 // Only run 5-tap low-pass on cameras with non-zero seam contribution (cuts texture reads by ~60%!)
                 vec3 lo0 = (wLowUse.x + wSharp.x) > 0.005 ? readLowPass(uCam0, uv0, uCamHW[0], uCamGain[0], valid.x) : vec3(0.0);
                 vec3 lo1 = (wLowUse.y + wSharp.y) > 0.005 ? readLowPass(uCam1, uv1, uCamHW[1], uCamGain[1], valid.y) : vec3(0.0);
@@ -1945,7 +2131,7 @@
                 vec4 wSingle = sumL < 1.5 ? valid : (uSmoothSeams > 0.5 ? wHigh : seamWeights(score, valid, 90.0));
                 liveCol = rgb0 * wSingle.x + rgb1 * wSingle.y + rgb2 * wSingle.z + rgb3 * wSingle.w;
               }
-              col = liveCol;
+              col = (allCamsHealthy && bodySdf < 0.28) ? mix(collarCol, liveCol, smoothstep(0.0, 0.24, liveEdge)) : liveCol;
             }
 
             if (inHistBounds) {
@@ -2036,13 +2222,17 @@
               }
             }
 
-            float rimFade = 1.0 - smoothstep(0.84, 1.0, vWallU) * 0.42;
+            // Gentle OEM atmospheric horizon fade ONLY near the upper sky rim (phi > 68 deg, Z > 4.6m)
+            // so road, curbs, guardrails, cars, riders & lower buildings stay 100% sharp and natural!
+            float horizonFade = smoothstep(0.76, 0.98, vWallU);
+            vec3 studioHorizon = mix(vec3(0.085, 0.105, 0.120), vec3(0.042, 0.055, 0.068), smoothstep(0.76, 1.0, vWallU));
+            col = mix(col, studioHorizon, horizonFade * 0.85);
             // In 2D Top-Down mode, softly feather outer walls beyond ±3.20m into dark slate
             if (uTopFade > 0.5) {
               float sideFade = 1.0 - smoothstep(3.20, 4.40, abs(vEgoPos.y)) * 0.65;
               col = mix(vec3(0.06, 0.08, 0.08), col, sideFade);
             }
-            gl_FragColor = vec4(clamp(col, 0.0, 1.0) * rimFade, 1.0);
+            gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
             #include <colorspace_fragment>
           }
         `,
@@ -2470,8 +2660,8 @@
     }
 
     function create3DStage(canvas, labelRoot, bowlGeo, camTextures, calibs, meta, arPoolFactory) {
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-      renderer.setPixelRatio(Math.min(1.25, window.devicePixelRatio || 1));
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.04;
 
@@ -2480,9 +2670,9 @@
       scene.fog = new THREE.FogExp2(0x060b0f, 0.020);
       scene.environment = buildStudioEnv(renderer);
 
-      const perspectiveCamera = new THREE.PerspectiveCamera(38, 1, 0.1, 80);
+      const perspectiveCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 90);
       perspectiveCamera.position.fromArray(VIEW_PRESETS.hero.pos);
-      const tileCamera = new THREE.PerspectiveCamera(38, 1, 0.1, 80);
+      const tileCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 90);
       const topCamera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 80);
       topCamera.position.set(0, 7, 0);
       topCamera.up.set(0, 0, -1);
@@ -2490,8 +2680,9 @@
 
       const controls = new OrbitControls(perspectiveCamera, canvas);
       controls.enableDamping = true; controls.dampingFactor = 0.08;
-      controls.maxPolarAngle = Math.PI * 0.48;
-      controls.minDistance = 3.2; controls.maxDistance = 24.0;
+      controls.minPolarAngle = Math.PI * 0.08;
+      controls.maxPolarAngle = Math.PI * 0.435;
+      controls.minDistance = 3.2; controls.maxDistance = 12.6;
       controls.target.fromArray(VIEW_PRESETS.hero.target);
 
       scene.add(new THREE.HemisphereLight(0xeef6ff, 0x162226, 1.35));
@@ -2592,10 +2783,10 @@
         canvas, labelRoot, renderer, scene, camera: perspectiveCamera, perspectiveCamera, tileCamera, topCamera, controls,
         bowl, bowlMat, splatLayer, depthSurfaceLayer, temporalGround, wide2D, vectorMap, suv, guideGroup,
         smoothMesh, smoothMat, arPool, roadEdgeGroup, voxMesh,
-        curLeftPoly: new THREE.Vector3(0, 0, 2.20),
-        targetLeftPoly: new THREE.Vector3(0, 0, 2.20),
-        curRightPoly: new THREE.Vector3(0, 0, -2.20),
-        targetRightPoly: new THREE.Vector3(0, 0, -2.20),
+        curLeftPoly: new THREE.Vector3(0, 0, 3.80),
+        targetLeftPoly: new THREE.Vector3(0, 0, 3.80),
+        curRightPoly: new THREE.Vector3(0, 0, -3.80),
+        targetRightPoly: new THREE.Vector3(0, 0, -3.80),
         curWallScale: 1.0,
         targetWallScale: 1.0,
         curAdaptStrength: 1.0,
@@ -2648,7 +2839,7 @@
       });
 
       const bowlGeo = buildBowlGeometry(bowlBuf);
-      const defaultLeft = [0.0, 0.0, 2.20], defaultRight = [0.0, 0.0, -2.20];
+      const defaultLeft = [0.0, 0.0, 4.80], defaultRight = [0.0, 0.0, -4.80];
 
       const arFactory = createArObjectPool();
       const mainStage = create3DStage($('glMain'), $('labelsMain'), bowlGeo, camTextures, calibs, meta, arFactory);
@@ -2676,7 +2867,7 @@
       let sceneMode = aiEnabled ? 'ar' : 'clean';
       let showArBoxes = aiEnabled, showPdc = aiEnabled, showDepthMesh = false, showStaticShield = false, showVoxels = false;
       if (!aiEnabled) {
-        for (const id of ['btnArBoxes', 'btnPdc', 'btnDepthMesh', 'btnStaticShield', 'btnVoxels', 'leftLegend', 'btnForeground', 'btnAdaptBowl', 'highlights']) {
+        for (const id of ['btnArBoxes', 'btnPdc', 'btnDepthMesh', 'btnStaticShield', 'btnVoxels', 'leftLegend', 'btnForeground', 'highlights']) {
           const el = $(id);
           if (el) el.hidden = true;
         }
@@ -2692,7 +2883,7 @@
         const bgEl = document.querySelector('.bottom-grid');
         if (bgEl) bgEl.style.gridTemplateColumns = '1fr';
       }
-      let xrayChassis = false, adaptBowl = false, shaderBlend = true, seamRefine = true;
+      let xrayChassis = false, adaptBowl = true, shaderBlend = true, seamRefine = true;
       let rightMode = 'cam-0', activeCam = 0, current = 0, displayedIndex = -1;
       let playing = false, timer = 0, frameBusy = false, queuedFrame = null;
       let nextCameraFrame = null;
@@ -2712,7 +2903,18 @@
       // ------------------------------------------------------------------
       // Commercial On-Screen 4-Camera Manual Calibration Controller (60 FPS live GPU)
       // ------------------------------------------------------------------
-      const CALIB_STORAGE_KEY = 'omnishield_manual_calib_v1';
+      // Bind localStorage key to the server profile's exact calibration signature so a newly
+      // deployed server profile NEVER gets corrupted by stale manual slider offsets!
+      const profileSig = (calibs || []).map(c =>
+        (c.t_cam_from_ego || []).slice(0, 12).map(v => Number(v).toFixed(4)).join(',')
+      ).join('|');
+      let sigHash = 2166136261;
+      for (let i = 0; i < profileSig.length; i++) {
+        sigHash ^= profileSig.charCodeAt(i);
+        sigHash = Math.imul(sigHash, 16777619);
+      }
+      const CALIB_STORAGE_KEY = `omnishield_manual_calib_v2_${(sigHash >>> 0).toString(16)}`;
+      try { localStorage.removeItem('omnishield_manual_calib_v1'); } catch {}
       const defaultManualState = () => ({
         cams: Array.from({ length: 4 }, () => ({ pitch: 0, roll: 0, yaw: 0, dx: 0, dy: 0, dz: 0, gain: 1.0, rb: 1.0 })),
         ground: { pitch: 0, roll: 0, dz: 0 },
@@ -3022,6 +3224,30 @@
           $('calibStatus').textContent = `Lỗi lưu: ${err.message}`;
         }
       };
+      $('btnExportLut').onclick = async () => {
+        const btn = $('btnExportLut');
+        btn.disabled = true;
+        $('calibStatus').textContent = 'Đang sinh bảng tra LUT cố định (2D Top-Down + 3D Bowl)...';
+        try {
+          const resp = await fetch('/api/export_lut', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              camera_calib: computeTunedCalibs(),
+              ground_plane: computeTunedGroundPlane(),
+            }),
+          });
+          const res = await resp.json();
+          if (!resp.ok || !res.ok) throw new Error(res.error || `HTTP ${resp.status}`);
+          const kb2 = (res.lut_2d_bin_bytes / 1024).toFixed(0);
+          const kb3 = (res.lut_3d_bin_bytes / 1024).toFixed(0);
+          $('calibStatus').textContent = `Đã xuất LUT nhúng -> ${res.out_dir} (2D: ${kb2} KB, 3D Bowl: ${kb3} KB + avm_lut_spec.h)`;
+        } catch (err) {
+          $('calibStatus').textContent = `Lỗi xuất LUT: ${err.message}`;
+        } finally {
+          btn.disabled = false;
+        }
+      };
       $('btnCalibExport').onclick = () => {
         const payload = {
           schema_version: 1,
@@ -3319,11 +3545,241 @@
       }
       $('btnPnpSolve').onclick = () => void solveActivePnp();
 
+      // Real-time 4-Camera 1D Median-Across-X Stereo Curb/Barrier Detector (zero LiDAR/AI, <1.5ms on 320x180!)
+      // Walks outward |Y| = 1.55..5.27m comparing Z=0.00m vs raised Z in {0.22, 0.34, 0.48, 0.70}m across 24
+      // longitudinal Front+Rear overlap samples. Longitudinal median rejects single passing motorbikes while
+      // locking onto continuous curbs/bridge barriers with ~10cm precision so Front/Side rays meet at exact curb height!
+      function createStereoCorridorTracker(getCalibs, getGP) {
+        const yCands = Array.from({ length: 32 }, (_, i) => 1.55 + i * 0.12);
+        const xsF = Array.from({ length: 14 }, (_, i) => 2.10 + (4.10 * i) / 13);
+        const xsR = Array.from({ length: 10 }, (_, i) => -5.30 + (3.30 * i) / 9);
+        const xsAll = [...xsF, ...xsR];
+        const nFront = xsF.length;
+        const nX = xsAll.length;
+        const zs = [0.00, 0.22, 0.34, 0.48, 0.70];
+        const nZ = zs.length;
+        let cachedSig = '';
+        let lutL = null, lutR = null;
+        let emaL = 3.80, emaR = 3.80, emaHL = 0.55, emaHR = 0.55;
+        const histL = [], histR = [];
+        const gxBuf = Array.from({ length: 4 }, () => new Float32Array(COLOR_SAMPLE_W * COLOR_SAMPLE_H));
+        const gyBuf = Array.from({ length: 4 }, () => new Float32Array(COLOR_SAMPLE_W * COLOR_SAMPLE_H));
+
+        function projPxIdx(c, ex, ey, ez) {
+          const dx = ex - c.cam_xy[0], dy = ey - c.cam_xy[1];
+          const dLen = Math.max(Math.hypot(dx, dy), 1e-4);
+          const fLen = Math.max(Math.hypot(c.cam_fwd[0], c.cam_fwd[1]), 1e-5);
+          if ((dx * c.cam_fwd[0] + dy * c.cam_fwd[1]) / (dLen * fLen) <= -0.25) return -1;
+          const m = c.t_cam_from_ego;
+          const x = m[0]*ex + m[1]*ey + m[2]*ez + m[3];
+          const y = m[4]*ex + m[5]*ey + m[6]*ez + m[7];
+          const z = m[8]*ex + m[9]*ey + m[10]*ez + m[11];
+          const rad = Math.hypot(x, y);
+          const th = Math.atan2(Math.max(rad, 1e-6), z);
+          if (th > c.max_theta_rad) return -1;
+          const t2 = th * th, kd = c.k;
+          const rDist = th * (1.0 + t2 * (kd[0] + t2 * (kd[1] + t2 * (kd[2] + t2 * kd[3]))));
+          const sc = rDist / Math.max(rad, 1e-6);
+          const u = (x * sc) * c.fxy[0] + (y * sc) * (c.skew || 0) + c.cxy[0];
+          const v = (y * sc) * c.fxy[1] + c.cxy[1];
+          const sh = c.hw[0], sw = c.hw[1];
+          if (u < 6 || v < 6 || u >= sw - 6 || v >= sh - 6) return -1;
+          const vc = c.valid_circle;
+          if (vc && vc[2] > 0 && Math.hypot(u - vc[0], v - vc[1]) > vc[2] - 8) return -1;
+          const sx = Math.min(COLOR_SAMPLE_W - 2, Math.max(1, Math.round(((u + 0.5) / sw) * COLOR_SAMPLE_W)));
+          const sy = Math.min(COLOR_SAMPLE_H - 2, Math.max(1, Math.round(((v + 0.5) / sh) * COLOR_SAMPLE_H)));
+          return sy * COLOR_SAMPLE_W + sx;
+        }
+
+        function ensureLuts() {
+          const cs = getCalibs();
+          const gp = getGP();
+          const sig = cs.map(c => c.t_cam_from_ego.slice(0, 12).map(v => v.toFixed(3)).join(',')).join('|') + '|' + gp.map(v => v.toFixed(4)).join(',');
+          if (sig === cachedSig && lutL && lutR) return;
+          cachedSig = sig;
+          const buildSide = sideSign => {
+            const sideCi = sideSign > 0 ? 2 : 3;
+            return yCands.map(cy => {
+              const yv = sideSign * cy;
+              const endIdx = new Int32Array(nZ * nX).fill(-1);
+              const sideIdx = new Int32Array(nZ * nX).fill(-1);
+              for (let zi = 0; zi < nZ; zi++) {
+                const zv = zs[zi];
+                for (let xi = 0; xi < nX; xi++) {
+                  const xv = xsAll[xi];
+                  const ciE = xi < nFront ? 0 : 1;
+                  const ez = gp[0] * xv + gp[1] * yv + gp[2] + zv;
+                  const ia = projPxIdx(cs[ciE], xv, yv, ez);
+                  if (ia < 0) continue;
+                  const ib = projPxIdx(cs[sideCi], xv, yv, ez);
+                  if (ib < 0) continue;
+                  const k = zi * nX + xi;
+                  endIdx[k] = ia;
+                  sideIdx[k] = ib;
+                }
+              }
+              return { sideCi, endIdx, sideIdx };
+            });
+          };
+          lutL = buildSide(1.0);
+          lutR = buildSide(-1.0);
+        }
+
+        function computeGrads(pix, outX, outY) {
+          if (!pix) return;
+          const W = COLOR_SAMPLE_W, H = COLOR_SAMPLE_H;
+          const inv255 = 1.0 / 255.0;
+          for (let y = 1; y < H - 1; y++) {
+            const row = y * W;
+            for (let x = 1; x < W - 1; x++) {
+              const p = row + x;
+              const lL = (0.299 * pix[4*(p-1)] + 0.587 * pix[4*(p-1)+1] + 0.114 * pix[4*(p-1)+2]) * inv255;
+              const lR = (0.299 * pix[4*(p+1)] + 0.587 * pix[4*(p+1)+1] + 0.114 * pix[4*(p+1)+2]) * inv255;
+              const lU = (0.299 * pix[4*(p-W)] + 0.587 * pix[4*(p-W)+1] + 0.114 * pix[4*(p-W)+2]) * inv255;
+              const lD = (0.299 * pix[4*(p+W)] + 0.587 * pix[4*(p+W)+1] + 0.114 * pix[4*(p+W)+2]) * inv255;
+              outX[p] = (lR - lL) * 2.0;
+              outY[p] = (lD - lU) * 2.0;
+            }
+          }
+        }
+
+        function medianOf(arr, len) {
+          if (len <= 0) return NaN;
+          const copy = arr.slice(0, len).sort((a, b) => a - b);
+          const m = len >> 1;
+          return (len & 1) ? copy[m] : 0.5 * (copy[m - 1] + copy[m]);
+        }
+
+        const errBuf0 = new Float32Array(nX);
+        const errBufK = new Float32Array(nX);
+        const errPerZ = Array.from({ length: nZ }, () => new Float32Array(nX));
+
+        function evalSide(pixels, gains, luts, prevY, prevH, hist, adjacent) {
+          const nY = luts.length;
+          const isRaised = new Uint8Array(nY);
+          const bestZArr = new Float32Array(nY);
+          const inv255 = 1.0 / 255.0;
+          const sideCi = luts[0].sideCi;
+          const pS = pixels[sideCi], gxS = gxBuf[sideCi], gyS = gyBuf[sideCi], kS = gains[sideCi];
+          if (!pS || (!pixels[0] && !pixels[1])) return [prevY, prevH];
+
+          for (let yi = 0; yi < nY; yi++) {
+            const { endIdx, sideIdx } = luts[yi];
+            let cnt0 = 0;
+            for (let zi = 0; zi < nZ; zi++) {
+              const rowErr = errPerZ[zi];
+              const base = zi * nX;
+              for (let xi = 0; xi < nX; xi++) {
+                const ia = endIdx[base + xi], ib = sideIdx[base + xi];
+                const ciE = xi < nFront ? 0 : 1;
+                const pE = pixels[ciE];
+                if (ia < 0 || ib < 0 || !pE) { rowErr[xi] = -1; continue; }
+                const kE = gains[ciE];
+                const a4 = 4 * ia, b4 = 4 * ib;
+                const dr = Math.abs(pE[a4] * kE.x - pS[b4] * kS.x);
+                const dg = Math.abs(pE[a4+1] * kE.y - pS[b4+1] * kS.y);
+                const db = Math.abs(pE[a4+2] * kE.z - pS[b4+2] * kS.z);
+                const diffRgb = (dr + dg + db) * (inv255 / 3.0);
+                const diffG = 0.5 * (Math.abs(gxBuf[ciE][ia] - gxS[ib]) + Math.abs(gyBuf[ciE][ia] - gyS[ib]));
+                rowErr[xi] = diffRgb + 0.70 * diffG;
+                if (zi === 0) errBuf0[cnt0++] = rowErr[xi];
+              }
+            }
+            if (cnt0 < 6) continue;
+            const flatErr = medianOf(errBuf0, cnt0);
+            let bestR = 999.0, bestZk = 0.32, bestVf = 0.0, bestFrontFrac = 0.0, bestRearFrac = 0.0;
+            for (let zi = 1; zi < nZ; zi++) {
+              let ck = 0, votes = 0, fV = 0, rV = 0, fCnt = 0, rCnt = 0;
+              const e0Row = errPerZ[0], ekRow = errPerZ[zi];
+              for (let xi = 0; xi < nX; xi++) {
+                const e0 = e0Row[xi], ek = ekRow[xi];
+                if (e0 < 0 || ek < 0) continue;
+                errBufK[ck++] = ek;
+                if (xi < nFront) fCnt++; else rCnt++;
+                if (e0 - ek > 0.025) {
+                  votes++;
+                  if (xi < nFront) fV++; else rV++;
+                }
+              }
+              if (ck < 6) continue;
+              const medK = medianOf(errBufK, ck);
+              if (medK < bestR) {
+                bestR = medK;
+                bestZk = zs[zi];
+                bestVf = votes / ck;
+                bestFrontFrac = fCnt >= 3 ? fV / fCnt : 0.0;
+                bestRearFrac = rCnt >= 2 ? rV / rCnt : 0.0;
+              }
+            }
+            const margin = flatErr - bestR;
+            bestZArr[yi] = bestZk;
+            // Require continuous curb corroboration on BOTH Front (X>2m) AND Rear (X<-2m) so passing motorbikes
+            // & scattered parked cars on wide adjacent lanes NEVER trigger a false curb step!
+            const strong = (margin > 0.022 && bestVf >= 0.48) || (flatErr > 0.130 && margin > 0.010 && bestVf >= 0.44);
+            const continuousWall = (bestFrontFrac >= 0.42 && bestRearFrac >= 0.35);
+            if (strong && continuousWall) isRaised[yi] = 1;
+          }
+
+          let rawY = 4.80, rawH = 0.0;
+          for (let yi = 0; yi < nY - 1; yi++) {
+            if (yCands[yi] < 1.85 || yCands[yi] > 4.20) continue;
+            if (isRaised[yi] && isRaised[yi + 1]) {
+              rawY = Math.max(1.85, yCands[yi] - 0.10);
+              const hSlice = [];
+              for (let k = yi; k < Math.min(nY, yi + 3); k++) hSlice.push(bestZArr[k] || 0.32);
+              hSlice.sort((a, b) => a - b);
+              const hMed = hSlice[hSlice.length >> 1];
+              // True low curb terrace (0.28..0.38m) — fixes curb height parallax without tilting trees/vans upward!
+              rawH = Math.max(0.28, Math.min(0.38, hMed));
+              break;
+            }
+          }
+
+          if (!adjacent) {
+            hist.length = 0;
+            hist.push(rawY);
+            return [Math.max(1.85, Math.min(5.10, rawY)), rawH];
+          }
+          hist.push(rawY);
+          if (hist.length > 5) hist.shift();
+          const hCopy = hist.slice().sort((a, b) => a - b);
+          const medY = hCopy[hCopy.length >> 1];
+          const step = Math.max(-0.22, Math.min(0.22, (medY - prevY) * 0.30));
+          const nextY = Math.max(1.85, Math.min(5.10, prevY + step));
+          const targetH = medY < 4.30 ? Math.max(0.28, rawH) : 0.0;
+          const nextH = prevH + (targetH - prevH) * 0.25;
+          return [nextY, nextH];
+        }
+
+        function update(pixels, gains, adjacent) {
+          ensureLuts();
+          for (let i = 0; i < 4; i++) computeGrads(pixels[i], gxBuf[i], gyBuf[i]);
+          [emaL, emaHL] = evalSide(pixels, gains, lutL, emaL, emaHL, histL, adjacent);
+          [emaR, emaHR] = evalSide(pixels, gains, lutR, emaR, emaHR, histR, adjacent);
+          return {
+            left_poly: [0.0, Number(emaHL.toFixed(3)), Number(emaL.toFixed(3))],
+            right_poly: [0.0, Number(emaHR.toFixed(3)), Number((-emaR).toFixed(3))],
+          };
+        }
+        return { update };
+      }
+
+      let liveStereoCorridor = { left_poly: [...defaultLeft], right_poly: [...defaultRight] };
+      const stereoCorridorTracker = createStereoCorridorTracker(() => calibs, () => computeTunedGroundPlane());
+
       function updateCameraColors(blend) {
         if (cameraImages.length === 0) return;
         const { pixels, gains } = sampleCameraColors(cameraImages, camMask);
         gains.forEach((rgb, i) => autoGains[i].lerp(gainTarget.fromArray(rgb), blend));
         syncComposedGains();
+        if (!aiEnabled) {
+          liveStereoCorridor = stereoCorridorTracker.update(pixels, cameraGains, blend < 1);
+          updateBowlLayers(blend >= 1);
+          for (const st of stages) {
+            st.bowlMat.uniforms.uLeftPoly.value.copy(st.curLeftPoly);
+            st.bowlMat.uniforms.uRightPoly.value.copy(st.curRightPoly);
+          }
+        }
         bowlSeams.sample(pixels, cameraGains, blend < 1, mainStage);
         colorUpdatedAt = performance.now();
       }
@@ -3634,7 +4090,7 @@
         for (const stage of stages) {
           stage.camera = stage.perspectiveCamera;
           stage.controls.enabled = !isWidePreset() && presetName !== 'rearWide';
-          stage.perspectiveCamera.fov = VIEW_PRESETS[presetName]?.fov || 38;
+          stage.perspectiveCamera.fov = VIEW_PRESETS[presetName]?.fov || 50;
           stage.perspectiveCamera.updateProjectionMatrix();
           stage.targetWallScale = 1.0;
         }
@@ -4099,11 +4555,14 @@
         }
       }
 
+      const isLive4Cam = meta.source === 'live-4cam';
+
       function prepareCameraFrame(frame, preview) {
         const present = meta.frames[frame].images_present;
-        const wParam = (preview && !aiEnabled) ? `&w=${PLAYBACK_TEXTURE_WIDTH}` : '';
+        const wParam = (preview && !aiEnabled) ? `&w=${PLAYBACK_TEXTURE_WIDTH}` : (isLive4Cam ? '&w=960' : '');
+        const bust = isLive4Cam ? `&t=${Date.now()}` : '';
         const cameras = Promise.all(present.map(async (yes, cam) => {
-          const image = yes ? await loadImage(`/api/image?index=${frame}&cam=${cam}${wParam}`) : null;
+          const image = yes ? await loadImage(`/api/image?index=${frame}&cam=${cam}${wParam}${bust}`) : null;
           return { image, bitmap: null };
         }));
         const url = rightProjectionUrl(frame, present);
@@ -4249,10 +4708,15 @@
             stage.targetDynZones[i].set(...z);
             if (resetCorridor || !playing) stage.curDynZones[i].copy(stage.targetDynZones[i]);
           }
-          if (resetCorridor || !adaptBowl || pack?.corridor) {
-            const corridor = adaptBowl && !resetCorridor ? pack?.corridor : null;
+          const activeCorr = pack?.corridor || (!aiEnabled ? liveStereoCorridor : null);
+          if (resetCorridor || !adaptBowl || activeCorr) {
+            const corridor = adaptBowl ? activeCorr : null;
             stage.targetLeftPoly.set(...(corridor?.left_poly || defaultLeft));
             stage.targetRightPoly.set(...(corridor?.right_poly || defaultRight));
+            if (resetCorridor || !playing) {
+              stage.curLeftPoly.copy(stage.targetLeftPoly);
+              stage.curRightPoly.copy(stage.targetRightPoly);
+            }
           }
         }
       }
@@ -4538,12 +5002,12 @@
       $('btnRect').onclick = () => { useRect = !useRect; $('btnRect').setAttribute('aria-pressed', String(useRect)); selectRightMode(rightMode); };
       new ResizeObserver(drawRightCamera).observe($('rightCanvas'));
 
-      // Asymmetric EMA on Corridor walls (alpha_in = 0.45 when curb moves closer, alpha_out = 0.08 when wider)
+      // Asymmetric EMA on Corridor walls (alpha_in = 0.45 when curb moves closer, alpha_out = 0.16 when wider)
       function morphCorridor(stage) {
         const stepWall = (cur, tgt, sideSign) => {
           const dC = tgt.z - cur.z;
           const movingInward = (sideSign > 0 ? dC < 0 : dC > 0);
-          const alpha = movingInward ? 0.45 : 0.08;
+          const alpha = movingInward ? 0.45 : 0.16;
           cur.x += (tgt.x - cur.x) * 0.22;
           cur.y += (tgt.y - cur.y) * 0.22;
           cur.z += dC * alpha;
@@ -4561,7 +5025,9 @@
         }
         stage.bowlMat.uniforms.uLeftPoly.value.copy(stage.curLeftPoly);
         stage.bowlMat.uniforms.uRightPoly.value.copy(stage.curRightPoly);
-        stage.bowlMat.uniforms.uWallScale.value = stage.curWallScale;
+        const isCalibMat = stage.bowlMat.uniforms.uCalibGrid.value > 0.5;
+        stage.bowlMat.uniforms.uWallScale.value = isCalibMat ? 0.0 : stage.curWallScale;
+        stage.bowlMat.uniforms.uCurbScale.value = isCalibMat ? 0.0 : 1.0;
         stage.bowlMat.uniforms.uAdaptStrength.value = stage.curAdaptStrength;
       }
 
@@ -4590,6 +5056,32 @@
         const blinkOn = Math.floor(tSec * 2.8) % 2 === 0;
         stage.suv.setTurnSignal(turnSignal, blinkOn);
         stage.controls.update();
+        // Dynamic Inside-Bowl Camera Guard: keeps orbiting camera strictly inside the wide 27.6m bowl (>= 1.25m above wall)
+        // so rotating 360 deg around the car NEVER clips or grazes the textured outer wall!
+        if (stage.camera.isPerspectiveCamera && activePreset !== 'left' && activePreset !== 'right') {
+          const cp = stage.perspectiveCamera.position;
+          const exC = -cp.z, eyC = -cp.x;
+          const rC = Math.hypot(exC, eyC);
+          if (rC > 0.2) {
+            const caC = exC / rC, saC = eyC / rC;
+            const uR = stage.bowlMat.uniforms.uRadii.value;
+            const uP = stage.bowlMat.uniforms.uProfile.value;
+            const fpC = stage.bowlMat.uniforms.uFlatPower ? stage.bowlMat.uniforms.uFlatPower.value : 8.0;
+            const rfC = Math.pow(Math.pow(Math.abs(caC) / uR.x, fpC) + Math.pow(Math.abs(saC) / uR.y, fpC), -1.0 / fpC);
+            const padC = 1.0 / Math.hypot(caC / uR.z, saC / uR.w);
+            const maxRC = (rfC + padC) * 0.84;
+            if (rC > maxRC) {
+              const scC = maxRC / rC;
+              cp.x *= scC; cp.z *= scC;
+            }
+            const rClamped = Math.min(rC, maxRC);
+            if (rClamped > rfC) {
+              const sinPhi = Math.min(0.98, (rClamped - rfC) / Math.max(padC, 0.5));
+              const wallHAtCam = uP.y * (1.0 - Math.cos(Math.asin(sinPhi)));
+              if (cp.y < wallHAtCam + 1.25) cp.y = wallHAtCam + 1.25;
+            }
+          }
+        }
 
         const renderWideDetail = (vx, vy, vw, vh, isRear) => {
           const u = stage.wide2D.mat.uniforms;
@@ -4641,11 +5133,11 @@
           const prevDepth = stage.bowlMat.uniforms.uDepthActive.value;
 
           stage.renderer.setScissorTest(true);
-          // Pass 1 (Left 35%): Tight 2D Top-Down 360° (flat outer wall + 2.5D curb elevation!)
+          // Pass 1 (Left 35%): Tight 2D Top-Down 360° (flat floor + DP optimal obstacle-avoiding seam!)
           stage.renderer.setViewport(0, 0, wTop, h);
           stage.renderer.setScissor(0, 0, wTop, h);
           stage.bowlMat.uniforms.uWallScale.value = 0.0;
-          stage.bowlMat.uniforms.uSeamActive.value = 0.0;
+          stage.bowlMat.uniforms.uSeamActive.value = prevSeam;
           stage.bowlMat.uniforms.uDepthActive.value = prevDepth;
           stage.bowlMat.uniforms.uTopFade.value = 1.0;
           stage.renderer.render(stage.scene, stage.topCamera);
@@ -4699,7 +5191,7 @@
         if (dtFps >= 500) {
           const fps = Math.round((fpsFrames * 1000) / dtFps);
           const el = $('metaFps');
-          if (el) el.textContent = `3D: ${fps} FPS · Video: 10 Hz`;
+          if (el) el.textContent = isLive4Cam ? `3D: ${fps} FPS · Live 4-Cam` : `3D: ${fps} FPS · Video: 10 Hz`;
           fpsFrames = 0;
           fpsLastMs = now;
         }
@@ -4725,6 +5217,15 @@
 
       applyPreset(activePreset, false);
       applyClip(clips[0], clips[0].drive_id === 'COMPLEX CITY' ? 30 : Math.min(19, clips[0].count - 1));
+      if (isLive4Cam) {
+        const pollLive = async () => {
+          const t0 = performance.now();
+          if (!frameBusy) await loadFrame(0);
+          const wait = Math.max(8, 33 - (performance.now() - t0));
+          setTimeout(pollLive, wait);
+        };
+        setTimeout(pollLive, 60);
+      }
       requestAnimationFrame(animate);
     })();
   </script>
